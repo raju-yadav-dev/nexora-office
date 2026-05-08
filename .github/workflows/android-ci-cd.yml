@@ -91,16 +91,25 @@ jobs:
       - name: Set up Gradle with caching
         uses: gradle/actions/setup-gradle@v4
         with:
+          gradle-version: current
           cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
 
-      - name: Grant execute permission for Gradle wrapper
-        run: chmod +x ./gradlew
+      - name: Resolve Gradle command
+        id: gradle_cmd
+        shell: bash
+        run: |
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            echo "cmd=./gradlew" >> "${GITHUB_OUTPUT}"
+          else
+            echo "cmd=gradle" >> "${GITHUB_OUTPUT}"
+          fi
 
       - name: Run lint (all modules)
-        run: ./gradlew --stacktrace --no-configuration-cache lint
+        run: ${{ steps.gradle_cmd.outputs.cmd }} --stacktrace --no-configuration-cache lint
 
       - name: Run unit tests (all modules)
-        run: ./gradlew --stacktrace testDebugUnitTest
+        run: ${{ steps.gradle_cmd.outputs.cmd }} --stacktrace testDebugUnitTest
 
       - name: Upload lint and test reports (always)
         if: always()
@@ -135,10 +144,19 @@ jobs:
       - name: Set up Gradle with caching
         uses: gradle/actions/setup-gradle@v4
         with:
+          gradle-version: current
           cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
 
-      - name: Grant execute permission for Gradle wrapper
-        run: chmod +x ./gradlew
+      - name: Resolve Gradle command
+        id: gradle_cmd
+        shell: bash
+        run: |
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            echo "cmd=./gradlew" >> "${GITHUB_OUTPUT}"
+          else
+            echo "cmd=gradle" >> "${GITHUB_OUTPUT}"
+          fi
 
       - name: Decode Android keystore (optional for signed release)
         if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
@@ -149,7 +167,7 @@ jobs:
 
       - name: Build debug APK
         if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_variant == 'debug' || github.event.inputs.build_variant == 'all' }}
-        run: ./gradlew --stacktrace :app:assembleDebug
+        run: ${{ steps.gradle_cmd.outputs.cmd }} --stacktrace :app:assembleDebug
 
       - name: Build release APK + AAB
         if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_variant == 'release' || github.event.inputs.build_variant == 'all' }}
@@ -160,7 +178,7 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           NEXORA_VERSION_NAME: ${{ needs.prepare.outputs.version_name }}
-        run: ./gradlew --stacktrace :app:assembleRelease :app:bundleRelease
+        run: ${{ steps.gradle_cmd.outputs.cmd }} --stacktrace :app:assembleRelease :app:bundleRelease
 
       - name: Upload debug APK
         if: always()
