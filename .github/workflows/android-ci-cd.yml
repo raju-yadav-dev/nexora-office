@@ -159,11 +159,13 @@ jobs:
           fi
 
       - name: Decode Android keystore (optional for signed release)
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' }}
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         shell: bash
         run: |
           mkdir -p "${RUNNER_TEMP}/signing"
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > "${RUNNER_TEMP}/signing/release.keystore"
+          echo "${ANDROID_KEYSTORE_BASE64}" | base64 --decode > "${RUNNER_TEMP}/signing/release.keystore"
 
       - name: Build debug APK
         if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_variant == 'debug' || github.event.inputs.build_variant == 'all' }}
