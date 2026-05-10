@@ -29,7 +29,7 @@ on:
           - production
 
 permissions:
-  contents: read
+  contents: write
   actions: read
 
 concurrency:
@@ -242,6 +242,44 @@ jobs:
           name: ${{ needs.prepare.outputs.artifact_prefix }}-release-notes
           path: build/ci/release-notes.md
           retention-days: 30
+
+  publish-release-assets:
+    name: Publish GitHub Release Assets
+    runs-on: ubuntu-latest
+    needs: [prepare, quality, build, release-notes]
+    # Auto-publish only from main branch pushes, or manually via workflow dispatch.
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ needs.prepare.outputs.artifact_prefix }}-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate release body
+        shell: bash
+        run: |
+          {
+            echo "Automated release assets for \`${{ needs.prepare.outputs.version_name }}\`."
+            echo ""
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Workflow Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } > RELEASE_NOTES.md
+
+      - name: Create or update GitHub release with assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.prepare.outputs.version_name }}
+          name: Nexora Office v${{ needs.prepare.outputs.version_name }}
+          body_path: RELEASE_NOTES.md
+          generate_release_notes: true
+          make_latest: true
+          files: |
+            release-assets/*.apk
+            release-assets/*.aab
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # Future deployment extensions (kept as placeholders for modular scaling):
   # 1) Firebase App Distribution job (internal QA)

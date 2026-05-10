@@ -23,6 +23,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":core:model"))
     implementation(project(":feature:dashboard"))
     implementation(project(":feature:filemanager"))
     implementation(project(":feature:editor"))

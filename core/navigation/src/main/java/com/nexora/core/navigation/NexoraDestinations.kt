@@ -8,7 +8,19 @@ sealed interface NexoraDestination {
     }
 
     data object FileManager : NexoraDestination {
-        override val route: String = "file_manager"
+        override val route: String = "files"
+    }
+
+    data object Tools : NexoraDestination {
+        override val route: String = "tools"
+    }
+
+    data object Templates : NexoraDestination {
+        override val route: String = "templates"
+    }
+
+    data object Profile : NexoraDestination {
+        override val route: String = "profile"
     }
 
     data object Editor : NexoraDestination {
