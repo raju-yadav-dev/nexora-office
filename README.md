@@ -1,6 +1,6 @@
 # nexora-office
 
-nexora-office is a professional modern Android office suite built with **100% Kotlin** and **Jetpack Compose**, designed with a premium desktop-like experience inspired by WPS Office, Microsoft Office, Google Docs, and VS Code aesthetics.
+nexora-office is a professional modern Android office suite built with **100% Kotlin** and **Jetpack Compose**, designed with a Pro desktop-like experience inspired by WPS Office, Microsoft Office, Google Docs, and VS Code aesthetics.
 
 ## Step-by-step foundation delivered
 
@@ -38,7 +38,7 @@ nexora-office is a professional modern Android office suite built with **100% Ko
 
 ### 5) Theme system
 - `NexoraTheme` with dark/light color schemes and custom palette.
-- Premium surface/contrast baseline for desktop-like UX.
+- Pro surface/contrast baseline for desktop-like UX.
 
 ### 6) Main dashboard UI
 - Quick action cards for document creation and workspace actions.

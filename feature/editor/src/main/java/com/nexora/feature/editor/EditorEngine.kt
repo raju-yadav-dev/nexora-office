@@ -26,9 +26,19 @@ class EditorEngine {
         _state.update { current ->
             val existing = current.tabs.any { it.fileId == tab.fileId }
             current.copy(
-                tabs = if (existing) current.tabs else current.tabs + tab,
+                tabs = if (existing) {
+                    current.tabs.map { if (it.fileId == tab.fileId) tab else it }
+                } else {
+                    current.tabs + tab
+                },
                 activeTabId = tab.fileId
             )
+        }
+    }
+
+    fun activateTab(fileId: String) {
+        _state.update { current ->
+            current.copy(activeTabId = fileId)
         }
     }
 

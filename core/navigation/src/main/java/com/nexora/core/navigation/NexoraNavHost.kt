@@ -1,10 +1,15 @@
 package com.nexora.core.navigation
 
+import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.navigation.NavType
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.navArgument
+import com.nexora.core.model.DocumentType
+import com.nexora.core.model.WorkspaceFile
 import com.nexora.feature.dashboard.DashboardScreen
 import com.nexora.feature.dashboard.ProfileScreen
 import com.nexora.feature.dashboard.TemplatesScreen
@@ -33,27 +38,27 @@ fun NexoraNavHost(
                 onOpenFileManager = {
                     navController.navigate(NexoraDestination.FileManager.route)
                 },
-                onOpenEditor = {
-                    navController.navigate(NexoraDestination.Editor.route)
+                onOpenEditor = { file ->
+                    navController.navigate(NexoraDestination.Editor.createRoute(file))
                 }
             )
         }
 
         composable(NexoraDestination.FileManager.route) {
             FileManagerScreen(onOpenFile = {
-                navController.navigate(NexoraDestination.Editor.route)
+                navController.navigate(NexoraDestination.Editor.createRoute(it))
             })
         }
 
         composable(NexoraDestination.Tools.route) {
-            ToolsScreen(onOpenEditor = {
-                navController.navigate(NexoraDestination.Editor.route)
+            ToolsScreen(onOpenEditor = { file ->
+                navController.navigate(NexoraDestination.Editor.createRoute(file))
             })
         }
 
         composable(NexoraDestination.Templates.route) {
-            TemplatesScreen(onOpenTemplate = {
-                navController.navigate(NexoraDestination.Editor.route)
+            TemplatesScreen(onOpenTemplate = { file ->
+                navController.navigate(NexoraDestination.Editor.createRoute(file))
             })
         }
 
@@ -61,8 +66,58 @@ fun NexoraNavHost(
             ProfileScreen()
         }
 
-        composable(NexoraDestination.Editor.route) {
-            EditorScreen()
+        composable(
+            route = NexoraDestination.Editor.route,
+            arguments = listOf(
+                navArgument(NexoraDestination.Editor.fileIdArg) {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
+                navArgument(NexoraDestination.Editor.titleArg) {
+                    type = NavType.StringType
+                    defaultValue = "Untitled Document.docx"
+                },
+                navArgument(NexoraDestination.Editor.typeArg) {
+                    type = NavType.StringType
+                    defaultValue = DocumentType.DOC.name
+                },
+                navArgument(NexoraDestination.Editor.pathArg) {
+                    type = NavType.StringType
+                    defaultValue = "nexora://workspace/new"
+                }
+            )
+        ) { backStackEntry ->
+            val title = backStackEntry.arguments
+                ?.getString(NexoraDestination.Editor.titleArg)
+                ?.let(Uri::decode)
+                ?.ifBlank { "Untitled Document.docx" }
+                ?: "Untitled Document.docx"
+            val fileId = backStackEntry.arguments
+                ?.getString(NexoraDestination.Editor.fileIdArg)
+                ?.let(Uri::decode)
+                ?.ifBlank { title }
+                ?: title
+            val path = backStackEntry.arguments
+                ?.getString(NexoraDestination.Editor.pathArg)
+                ?.let(Uri::decode)
+                ?.ifBlank { "nexora://workspace/new" }
+                ?: "nexora://workspace/new"
+            val type = backStackEntry.arguments
+                ?.getString(NexoraDestination.Editor.typeArg)
+                ?.let { runCatching { DocumentType.valueOf(it) }.getOrDefault(DocumentType.DOC) }
+                ?: DocumentType.DOC
+
+            EditorScreen(
+                openedFile = WorkspaceFile(
+                    id = fileId,
+                    name = title,
+                    path = path,
+                    type = type
+                ),
+                onDone = {
+                    navController.popBackStack()
+                }
+            )
         }
     }
 }

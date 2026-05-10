@@ -26,4 +26,6 @@ dependencies {
     implementation(project(":core:database"))
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.datastore.preferences)
+    implementation(libs.apache.poi)
+    implementation(libs.apache.poi.ooxml)
 }

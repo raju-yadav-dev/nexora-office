@@ -1,11 +1,16 @@
 package com.nexora.feature.editor
 
+import android.net.Uri
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -15,27 +20,62 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.stickyHeader
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.focus.focusable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.animation.animateColorAsState
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nexora.core.designsystem.component.NexoraCard
 import com.nexora.core.designsystem.component.NexoraGradientBackground
 import com.nexora.core.designsystem.component.NexoraIconBadge
@@ -46,23 +86,186 @@ import com.nexora.core.designsystem.theme.NexoraError
 import com.nexora.core.designsystem.theme.NexoraPrimary
 import com.nexora.core.designsystem.theme.NexoraPrimaryVariant
 import com.nexora.core.designsystem.theme.NexoraSecondary
+import com.nexora.core.data.document.DocxDocumentRepository
+import com.nexora.core.data.document.PptxDocumentRepository
+import com.nexora.core.data.document.PdfRenderSession
+import com.nexora.core.data.document.TextDocumentRepository
+import com.nexora.core.data.document.XlsxDocumentRepository
+import com.nexora.core.model.DocumentType
+import com.nexora.core.model.CellRef
+import com.nexora.core.model.DocumentBlock
+import com.nexora.core.model.HeadingBlock
+import com.nexora.core.model.ImageBlock
+import com.nexora.core.model.ListStyle
+import com.nexora.core.model.ParagraphAlignment
+import com.nexora.core.model.ParagraphBlock
+import com.nexora.core.model.PptxDocument
+import com.nexora.core.model.PptxImageElement
+import com.nexora.core.model.PptxTextElement
+import com.nexora.core.model.TableBlock
+import com.nexora.core.model.TextRun
 import com.nexora.core.model.EditorTab
+import com.nexora.core.model.WorkspaceFile
+import io.github.rosemoe.sora.text.Content
+import io.github.rosemoe.sora.text.TextChangeListener
+import io.github.rosemoe.sora.widget.CodeEditor
+import kotlinx.coroutines.launch
 
 @Composable
-fun EditorScreen() {
+fun EditorScreen(
+    openedFile: WorkspaceFile? = null,
+    onDone: () -> Unit = {}
+) {
+    val context = LocalContext.current
+    val contentResolver = context.contentResolver
     val engine = remember { EditorEngine() }
+    val xlsxRepository = remember { XlsxDocumentRepository() }
+    val pptxRepository = remember { PptxDocumentRepository() }
+    val textRepository = remember { TextDocumentRepository() }
+    val spreadsheetViewModel: SpreadsheetViewModel = viewModel(
+        factory = SpreadsheetViewModelFactory(xlsxRepository)
+    )
+    val scope = rememberCoroutineScope()
     val initialTabs = remember {
         listOf(
-            EditorTab(fileId = "proposal", title = "Proposal.docx", dirty = false),
-            EditorTab(fileId = "report", title = "Report.xlsx", dirty = true),
-            EditorTab(fileId = "guide", title = "Guide.pdf", dirty = false)
+            EditorTab(fileId = "proposal", title = "Proposal.docx", dirty = false, type = DocumentType.DOC),
+            EditorTab(fileId = "report", title = "Report.xlsx", dirty = true, type = DocumentType.SHEET),
+            EditorTab(fileId = "guide", title = "Guide.pdf", dirty = false, type = DocumentType.PDF)
         )
     }
     val state by engine.state.collectAsState()
-    var activeMode by remember { mutableStateOf(EditorMode.Document) }
+    val activeTab = state.tabs.firstOrNull { it.fileId == state.activeTabId }
+    var activeMode by remember(openedFile?.id) {
+        mutableStateOf(openedFile?.type.toEditorMode())
+    }
+    var selectedTool by remember { mutableStateOf("Select") }
+    var docxState by remember { mutableStateOf(DocxUiState()) }
+    var pptxState by remember { mutableStateOf(PptxUiState()) }
+    var textState by remember { mutableStateOf(TextUiState()) }
+    val spreadsheetState by spreadsheetViewModel.state.collectAsState()
 
-    LaunchedEffect(engine) {
+    // FIX #5: Wrap in remember so the controller reference is stable across recompositions.
+    // Lambda fields in data classes are never structurally equal, so the old inline
+    // construction rebuilt the controller (and fully recomposed SpreadsheetEditor) every frame.
+    val spreadsheetController = remember(spreadsheetViewModel, engine) {
+        SpreadsheetInteractionController(
+            onCellSelected = { ref -> spreadsheetViewModel.selectCell(ref) },
+            onCellTap = { ref -> spreadsheetViewModel.beginEdit(ref) },
+            onBeginEdit = { ref -> spreadsheetViewModel.beginEdit(ref) },
+            onBeginEditWithText = { text ->
+                spreadsheetViewModel.beginEditWithText(text)
+            },
+            onEditorTextChange = { updated ->
+                spreadsheetViewModel.updateEditorText(updated)
+            },
+            onCommitEdit = { spreadsheetViewModel.commitEdit() },
+            onCommitEditAndMove = { rowDelta, colDelta ->
+                spreadsheetViewModel.commitEditAndMove(rowDelta, colDelta)
+            },
+            onCancelEdit = { spreadsheetViewModel.cancelEdit() },
+            onMoveSelection = { rowDelta, colDelta ->
+                spreadsheetViewModel.moveSelection(rowDelta, colDelta)
+            },
+            onFormulaBarChange = { updated ->
+                spreadsheetViewModel.updateFormulaBar(updated)
+            },
+            onSheetSelected = { sheetIndex ->
+                spreadsheetViewModel.selectSheet(sheetIndex)
+            }
+        )
+    }
+
+    LaunchedEffect(engine, openedFile?.id) {
         initialTabs.forEach { engine.openTab(it) }
+        openedFile?.let { engine.openTab(it.toEditorTab()) }
+    }
+
+    LaunchedEffect(activeTab?.fileId) {
+        activeTab?.let { activeMode = it.type.toEditorMode() }
+    }
+
+    // Mark the active spreadsheet tab dirty when a committed edit finishes recalculating.
+    // isRecalculating transitions false->true on commit start, and true->false on completion.
+    LaunchedEffect(spreadsheetState.isRecalculating) {
+        if (!spreadsheetState.isRecalculating && spreadsheetState.sheetNames.isNotEmpty()) {
+            activeTab?.fileId?.let { fileId -> engine.markDirty(fileId = fileId, dirty = true) }
+        }
+    }
+
+    LaunchedEffect(activeTab?.fileId, activeTab?.sourcePath, activeTab?.type) {
+        val uri = activeTab?.sourcePath
+            ?.takeIf { it.startsWith("content://") }
+            ?.let(Uri::parse)
+        when (activeTab?.type) {
+            DocumentType.DOC -> {
+                if (uri != null) {
+                    docxState = DocxUiState(isLoading = true)
+                    docxState = runCatching {
+                        val document = docxRepository.loadDocx(contentResolver, uri)
+                        DocxUiState(
+                            isLoading = false,
+                            document = document,
+                            editText = document.toPlainText()
+                        )
+                    }.getOrElse { error ->
+                        DocxUiState(isLoading = false, error = error.message ?: "Failed to load document")
+                    }
+                } else {
+                    val title = activeTab?.title ?: "Untitled Document"
+                    val document = DocxDocument(
+                        blocks = listOf(
+                            ParagraphBlock(runs = listOf(TextRun(title)))
+                        )
+                    )
+                    docxState = DocxUiState(document = document, editText = document.toPlainText())
+                }
+                xlsxState = XlsxUiState()
+                pptxState = PptxUiState()
+                textState = TextUiState()
+            }
+            DocumentType.SHEET -> {
+                spreadsheetViewModel.load({ contentResolver }, uri)
+                docxState = DocxUiState()
+                pptxState = PptxUiState()
+                textState = TextUiState()
+            }
+            DocumentType.SLIDE -> {
+                if (uri != null) {
+                    pptxState = PptxUiState(isLoading = true)
+                    pptxState = runCatching {
+                        val document = pptxRepository.loadPptx(contentResolver, uri)
+                        PptxUiState(document = document)
+                    }.getOrElse { error ->
+                        PptxUiState(error = error.message ?: "Failed to load presentation")
+                    }
+                } else {
+                    pptxState = PptxUiState(document = PptxDocument())
+                }
+                docxState = DocxUiState()
+                xlsxState = XlsxUiState()
+                textState = TextUiState()
+            }
+            DocumentType.TEXT -> {
+                if (uri != null) {
+                    textState = TextUiState(isLoading = true)
+                    textState = runCatching {
+                        val content = textRepository.loadText(contentResolver, uri)
+                        TextUiState(content = content)
+                    }.getOrElse { error ->
+                        TextUiState(error = error.message ?: "Failed to load text")
+                    }
+                } else {
+                    textState = TextUiState(content = "")
+                }
+                docxState = DocxUiState()
+                pptxState = PptxUiState()
+            }
+            else -> {
+                docxState = DocxUiState()
+                pptxState = PptxUiState()
+                textState = TextUiState()
+            }
+        }
     }
 
     NexoraGradientBackground(modifier = Modifier.fillMaxSize()) {
@@ -72,8 +275,65 @@ fun EditorScreen() {
                 .padding(top = 18.dp, bottom = 18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            EditorHeader(activeMode = activeMode)
-            OpenTabStrip(tabs = state.tabs, activeTabId = state.activeTabId)
+            EditorHeader(
+                activeMode = activeMode,
+                activeTab = activeTab,
+                onDone = onDone,
+                onSave = {
+                    val tab = activeTab ?: return@EditorHeader
+                    val uri = tab.sourcePath
+                        .takeIf { it.startsWith("content://") }
+                        ?.let(Uri::parse)
+                    when (tab.type) {
+                        DocumentType.DOC -> {
+                            val updatedDocument = docxState.document?.let { existing ->
+                                if (docxState.isEditing) docxState.editText.toDocxDocument() else existing
+                            }
+                            if (uri != null && updatedDocument != null) {
+                                scope.launch {
+                                    docxRepository.saveDocx(contentResolver, uri, updatedDocument)
+                                    engine.markDirty(fileId = tab.fileId, dirty = false)
+                                }
+                                return@EditorHeader
+                            }
+                        }
+                        DocumentType.SHEET -> {
+                            spreadsheetViewModel.save({ contentResolver }, uri)
+                            engine.markDirty(fileId = tab.fileId, dirty = false)
+                            return@EditorHeader
+                        }
+                        DocumentType.SLIDE -> {
+                            val document = pptxState.document
+                            if (uri != null && document != null) {
+                                scope.launch {
+                                    pptxRepository.savePptx(contentResolver, uri, document)
+                                    engine.markDirty(fileId = tab.fileId, dirty = false)
+                                }
+                                return@EditorHeader
+                            }
+                        }
+                        DocumentType.TEXT -> {
+                            if (uri != null) {
+                                scope.launch {
+                                    textRepository.saveText(contentResolver, uri, textState.content)
+                                    engine.markDirty(fileId = tab.fileId, dirty = false)
+                                }
+                                return@EditorHeader
+                            }
+                        }
+                        else -> Unit
+                    }
+                    engine.markDirty(fileId = tab.fileId, dirty = false)
+                }
+            )
+            OpenTabStrip(
+                tabs = state.tabs,
+                activeTabId = state.activeTabId,
+                onSelectTab = { tab ->
+                    engine.activateTab(tab.fileId)
+                    activeMode = tab.type.toEditorMode()
+                }
+            )
             ModeStrip(activeMode = activeMode, onModeSelected = { activeMode = it })
 
             Box(
@@ -82,43 +342,101 @@ fun EditorScreen() {
                     .weight(1f)
             ) {
                 when (activeMode) {
-                    EditorMode.Document -> DocumentEditor()
-                    EditorMode.Spreadsheet -> SpreadsheetEditor()
-                    EditorMode.Presentation -> PresentationEditor()
-                    EditorMode.Pdf -> PdfReader()
-                    EditorMode.Workspace -> WorkspacePanel()
+                    EditorMode.Document -> DocumentEditor(
+                        activeTab = activeTab,
+                        state = docxState,
+                        onToggleEdit = { docxState = docxState.copy(isEditing = !docxState.isEditing) },
+                        onEditTextChange = {
+                            docxState = docxState.copy(editText = it)
+                            activeTab?.fileId?.let { fileId ->
+                                engine.markDirty(fileId = fileId, dirty = true)
+                            }
+                        }
+                    )
+                    EditorMode.Spreadsheet -> SpreadsheetEditor(
+                        activeTab = activeTab,
+                        state = spreadsheetState,
+                        controller = spreadsheetController
+                    )
+                    EditorMode.Presentation -> PresentationEditor(
+                        activeTab = activeTab,
+                        state = pptxState,
+                        onSlideSelected = { index ->
+                            pptxState = pptxState.copy(activeSlideIndex = index)
+                        },
+                        onTextUpdated = { slideIndex, elementId, newText ->
+                            pptxState = pptxState.updateText(slideIndex, elementId, newText)
+                            activeTab?.fileId?.let { fileId ->
+                                engine.markDirty(fileId = fileId, dirty = true)
+                            }
+                        }
+                    )
+                    EditorMode.Pdf -> PdfReader(activeTab = activeTab)
+                    EditorMode.Text -> TextEditor(
+                        activeTab = activeTab,
+                        state = textState,
+                        onContentChanged = { updated ->
+                            textState = textState.copy(content = updated)
+                            activeTab?.fileId?.let { fileId ->
+                                engine.markDirty(fileId = fileId, dirty = true)
+                            }
+                        }
+                    )
+                    EditorMode.Workspace -> WorkspacePanel(
+                        tabs = state.tabs,
+                        onSelectTab = { tab ->
+                            engine.activateTab(tab.fileId)
+                            activeMode = tab.type.toEditorMode()
+                        }
+                    )
                 }
             }
 
-            EditorToolbar(activeMode = activeMode)
+            EditorToolbar(
+                activeMode = activeMode,
+                selectedTool = selectedTool,
+                onToolSelected = { selectedTool = it }
+            )
         }
     }
 }
 
 @Composable
-private fun EditorHeader(activeMode: EditorMode) {
+private fun EditorHeader(
+    activeMode: EditorMode,
+    activeTab: EditorTab?,
+    onDone: () -> Unit,
+    onSave: () -> Unit
+) {
+    val title = activeTab?.title ?: activeMode.fileName
+    val subtitle = when {
+        activeTab?.dirty == true -> "Unsaved changes - Pro editor"
+        activeTab?.sourcePath?.startsWith("content://") == true -> "Local file opened - Pro editor"
+        else -> "Autosaved - Pro editor"
+    }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
             text = "Done",
             style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.clickable(onClick = onDone)
         )
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = activeMode.fileName,
+                text = title,
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = "Autosaved - cloud synced",
+                text = subtitle,
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        NexoraToolbarButton(label = "Save")
+        NexoraToolbarButton(label = "Save", onClick = onSave)
         Spacer(Modifier.width(8.dp))
         NexoraToolbarButton(label = "...")
     }
@@ -127,7 +445,8 @@ private fun EditorHeader(activeMode: EditorMode) {
 @Composable
 private fun OpenTabStrip(
     tabs: List<EditorTab>,
-    activeTabId: String?
+    activeTabId: String?,
+    onSelectTab: (EditorTab) -> Unit
 ) {
     Row(
         modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -136,7 +455,8 @@ private fun OpenTabStrip(
         tabs.forEach { tab ->
             NexoraPill(
                 label = if (tab.dirty) "${tab.title} *" else tab.title,
-                selected = tab.fileId == activeTabId
+                selected = tab.fileId == activeTabId,
+                onClick = { onSelectTab(tab) }
             )
         }
     }
@@ -162,80 +482,660 @@ private fun ModeStrip(
 }
 
 @Composable
-private fun DocumentEditor() {
-    var body by remember {
-        mutableStateOf(
-            "1. Executive Summary\n\nNexora Office is a modern office suite for Android that brings documents, spreadsheets, presentations and PDF workflows into one focused workspace.\n\n2. Our Vision\n\nTo help teams create, edit and manage work quickly with a premium mobile-first experience."
-        )
-    }
-
+private fun DocumentEditor(
+    activeTab: EditorTab?,
+    state: DocxUiState,
+    onToggleEdit: () -> Unit,
+    onEditTextChange: (String) -> Unit
+) {
     NexoraCard(contentPadding = 0.dp, modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color(0xFFF8F8FA))
-                .padding(18.dp)
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            OutlinedTextField(
-                value = body,
-                onValueChange = { body = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color(0xFF111827)),
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = Color.Transparent,
-                    unfocusedContainerColor = Color.Transparent,
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                    cursorColor = NexoraPrimary
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = activeTab?.title ?: "Document",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color(0xFF111827),
+                    modifier = Modifier.weight(1f)
                 )
-            )
+                NexoraToolbarButton(
+                    label = if (state.isEditing) "Preview" else "Edit",
+                    selected = state.isEditing,
+                    onClick = onToggleEdit
+                )
+            }
+
+            when {
+                state.isLoading -> {
+                    Text(
+                        text = "Loading document...",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFF6B7280)
+                    )
+                }
+                state.error != null -> {
+                    Text(
+                        text = state.error,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = NexoraError
+                    )
+                }
+                state.isEditing -> {
+                    OutlinedTextField(
+                        value = state.editText,
+                        onValueChange = onEditTextChange,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color(0xFF111827)),
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                            cursorColor = NexoraPrimary
+                        )
+                    )
+                }
+                state.document != null -> {
+                    DocxDocumentView(
+                        document = state.document,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                else -> {
+                    Text(
+                        text = "Open a DOCX file to start editing.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFF6B7280)
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun SpreadsheetEditor() {
-    val rows = listOf(
-        listOf("Month", "Sales", "Profit"),
-        listOf("Jan", "12000", "2400"),
-        listOf("Feb", "15000", "3000"),
-        listOf("Mar", "18000", "3600"),
-        listOf("Apr", "16000", "3200")
-    )
+private fun DocxDocumentView(document: DocxDocument, modifier: Modifier = Modifier) {
+    LazyColumn(
+        modifier = modifier,
+        contentPadding = PaddingValues(bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        items(document.blocks) { block ->
+            when (block) {
+                is HeadingBlock -> {
+                    Text(
+                        text = runsToAnnotatedString(block.runs),
+                        style = when (block.level) {
+                            1 -> MaterialTheme.typography.headlineMedium
+                            2 -> MaterialTheme.typography.headlineSmall
+                            else -> MaterialTheme.typography.titleLarge
+                        },
+                        color = Color(0xFF111827)
+                    )
+                }
+                is ParagraphBlock -> {
+                    Text(
+                        text = runsToAnnotatedString(block.runs, block.listStyle),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = Color(0xFF111827),
+                        textAlign = block.alignment.toTextAlign()
+                    )
+                }
+                is TableBlock -> {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        block.rows.forEach { row ->
+                            Row(modifier = Modifier.fillMaxWidth()) {
+                                row.forEach { cell ->
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .border(1.dp, Color(0xFFD4DAE6))
+                                            .padding(8.dp)
+                                    ) {
+                                        Text(
+                                            text = cell,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = Color(0xFF111827)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                is ImageBlock -> {
+                    NexoraCard(contentPadding = 12.dp) {
+                        Text(
+                            text = "${block.description} (image)",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color(0xFF6B7280)
+                        )
+                    }
+                }
+                else -> Unit
+            }
+        }
+    }
+}
+
+private fun runsToAnnotatedString(runs: List<TextRun>, listStyle: ListStyle = ListStyle.NONE): AnnotatedString {
+    return AnnotatedString.Builder().apply {
+        if (listStyle == ListStyle.BULLET) {
+            append("• ")
+        }
+        runs.forEach { run ->
+            val style = SpanStyle(
+                fontWeight = if (run.bold) FontWeight.Bold else null,
+                fontStyle = if (run.italic) FontStyle.Italic else null,
+                textDecoration = if (run.underline) TextDecoration.Underline else null
+            )
+            withStyle(style) { append(run.text) }
+        }
+    }.toAnnotatedString()
+}
+
+private fun ParagraphAlignment.toTextAlign(): TextAlign = when (this) {
+    ParagraphAlignment.CENTER -> TextAlign.Center
+    ParagraphAlignment.END -> TextAlign.End
+    ParagraphAlignment.JUSTIFY -> TextAlign.Justify
+    ParagraphAlignment.START -> TextAlign.Start
+}
+
+private fun DocxDocument.toPlainText(): String {
+    val builder = StringBuilder()
+    blocks.forEach { block ->
+        when (block) {
+            is HeadingBlock -> builder.append(block.runs.joinToString("") { it.text })
+            is ParagraphBlock -> {
+                if (block.listStyle == ListStyle.BULLET) builder.append("• ")
+                builder.append(block.runs.joinToString("") { it.text })
+            }
+            is TableBlock -> {
+                block.rows.forEach { row ->
+                    builder.append(row.joinToString("\t"))
+                    builder.append("\n")
+                }
+                builder.append("\n")
+                return@forEach
+            }
+            is ImageBlock -> builder.append("[Image: ${block.description}]")
+            else -> Unit
+        }
+        builder.append("\n\n")
+    }
+    return builder.toString().trimEnd()
+}
+
+private fun String.toDocxDocument(): DocxDocument {
+    val paragraphs = split(Regex("\\n\\s*\\n"))
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .map { text ->
+            ParagraphBlock(runs = listOf(TextRun(text)))
+        }
+    return DocxDocument(blocks = paragraphs)
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SpreadsheetEditor(
+    activeTab: EditorTab?,
+    state: SpreadsheetUiState,
+    controller: SpreadsheetInteractionController
+) {
+    val focusManager = LocalFocusManager.current
+    val focusRequester = remember { FocusRequester() }
+    val listState = rememberLazyListState()
+    val horizontalScroll = rememberScrollState()
+    val density = LocalDensity.current
+    val cellWidthPx = with(density) { 110.dp.toPx() }
+    val rowHeaderWidthPx = with(density) { 46.dp.toPx() }
 
     NexoraCard(contentPadding = 0.dp, modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color(0xFFF8FAFC))
-                .padding(12.dp)
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(
-                text = "Sales Report",
+                text = activeTab?.title ?: "Spreadsheet",
                 style = MaterialTheme.typography.titleLarge,
-                color = Color(0xFF111827),
-                modifier = Modifier.padding(8.dp)
+                color = Color(0xFF111827)
             )
-            rows.forEachIndexed { rowIndex, row ->
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    row.forEach { cell ->
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(42.dp)
-                                .border(1.dp, Color(0xFFD4DAE6))
-                                .background(if (rowIndex == 0) Color(0xFF1D4ED8) else Color.White)
-                                .padding(8.dp),
-                            contentAlignment = Alignment.CenterStart
-                        ) {
-                            Text(
-                                text = cell,
-                                color = if (rowIndex == 0) Color.White else Color(0xFF111827),
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = if (rowIndex == 0) FontWeight.Bold else FontWeight.Normal
+
+            when {
+                state.isLoading -> {
+                    Text("Loading spreadsheet...", color = Color(0xFF6B7280))
+                }
+                state.error != null -> {
+                    Text(state.error, color = NexoraError)
+                }
+                state.sheetNames.isEmpty() -> {
+                    Text("Open an XLSX file to start editing.", color = Color(0xFF6B7280))
+                }
+                else -> {
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        state.sheetNames.forEachIndexed { index, sheetName ->
+                            NexoraPill(
+                                label = sheetName.ifBlank { "Sheet ${index + 1}" },
+                                selected = index == state.activeSheetIndex,
+                                onClick = { controller.onSheetSelected(index) }
                             )
+                        }
+                    }
+
+                    val maxRow = maxOf(state.maxRow + 1, 30).coerceAtMost(200)
+                    val maxColumn = maxOf(state.maxColumn + 1, 12).coerceAtMost(26)
+                    val selectedCell = state.selectionState.ref
+
+                    OutlinedTextField(
+                        value = state.formulaBarText,
+                        onValueChange = { updated ->
+                            if (selectedCell != null) controller.onFormulaBarChange(updated)
+                        },
+                        label = { Text("Formula / Value") },
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                controller.onCommitEdit()
+                                focusManager.clearFocus()
+                            }
+                        )
+                    )
+
+                    if (state.isRecalculating) {
+                        Text("Recalculating...", color = Color(0xFF6B7280))
+                    }
+
+                    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                        val viewportWidthPx = with(density) { maxWidth.toPx() - rowHeaderWidthPx }
+                        // FIX #3: Key only on selectedCell so scroll doesn't fire on every
+                        // recalculation that bumps maxRow/maxColumn.
+                        // FIX #8: stickyHeader doesn't occupy an item slot — use ref.row directly.
+                        LaunchedEffect(selectedCell) {
+                            val ref = selectedCell ?: return@LaunchedEffect
+                            listState.animateScrollToItem(ref.row.coerceAtLeast(0))
+                            val cellLeft = ref.column * cellWidthPx
+                            val cellRight = cellLeft + cellWidthPx
+                            val current = horizontalScroll.value.toFloat()
+                            val target = when {
+                                cellLeft < current -> cellLeft
+                                cellRight > current + viewportWidthPx -> cellRight - viewportWidthPx
+                                else -> current
+                            }
+                            horizontalScroll.animateScrollTo(target.toInt().coerceAtLeast(0))
+                            focusRequester.requestFocus()
+                        }
+
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .focusRequester(focusRequester)
+                                .focusable()
+                                .onPreviewKeyEvent { event ->
+                                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                    val ref = state.selectionState.ref
+                                    val shift = event.isShiftPressed
+                                    val editing = state.editorState.isEditing
+                                    when (event.key) {
+                                        Key.DirectionUp -> {
+                                            if (editing) controller.onCommitEditAndMove(-1, 0) else controller.onMoveSelection(-1, 0)
+                                            true
+                                        }
+                                        Key.DirectionDown -> {
+                                            if (editing) controller.onCommitEditAndMove(1, 0) else controller.onMoveSelection(1, 0)
+                                            true
+                                        }
+                                        Key.DirectionLeft -> {
+                                            if (editing) controller.onCommitEditAndMove(0, -1) else controller.onMoveSelection(0, -1)
+                                            true
+                                        }
+                                        Key.DirectionRight -> {
+                                            if (editing) controller.onCommitEditAndMove(0, 1) else controller.onMoveSelection(0, 1)
+                                            true
+                                        }
+                                        Key.Tab -> {
+                                            if (editing) {
+                                                controller.onCommitEditAndMove(0, if (shift) -1 else 1)
+                                            } else {
+                                                controller.onMoveSelection(0, if (shift) -1 else 1)
+                                            }
+                                            true
+                                        }
+                                        Key.Enter -> {
+                                            if (editing) {
+                                                controller.onCommitEditAndMove(if (shift) -1 else 1, 0)
+                                            } else if (ref != null) {
+                                                controller.onBeginEdit(ref)
+                                            }
+                                            true
+                                        }
+                                        Key.Escape -> {
+                                            if (editing) {
+                                                controller.onCancelEdit()
+                                                true
+                                            } else {
+                                                false
+                                            }
+                                        }
+                                        else -> {
+                                            // FIX #12: Guard against modifier keys that can produce
+                                            // non-zero unicodeChar values (e.g., AltGr combos).
+                                            if (!editing && ref != null) {
+                                                val isModifier = event.key == Key.ShiftLeft ||
+                                                    event.key == Key.ShiftRight ||
+                                                    event.key == Key.CtrlLeft ||
+                                                    event.key == Key.CtrlRight ||
+                                                    event.key == Key.AltLeft ||
+                                                    event.key == Key.AltRight ||
+                                                    event.key == Key.MetaLeft ||
+                                                    event.key == Key.MetaRight ||
+                                                    event.key == Key.CapsLock ||
+                                                    event.key == Key.Function
+                                                if (!isModifier) {
+                                                    val unicode = event.nativeKeyEvent.unicodeChar
+                                                    if (unicode > 0 && !Character.isISOControl(unicode)) {
+                                                        controller.onBeginEditWithText(unicode.toChar().toString())
+                                                        return@onPreviewKeyEvent true
+                                                    }
+                                                }
+                                            }
+                                            false
+                                        }
+                                    }
+                                },
+                            state = listState,
+                            contentPadding = PaddingValues(bottom = 24.dp)
+                        ) {
+                            stickyHeader {
+                                Row {
+                                    Box(
+                                        modifier = Modifier
+                                            .width(46.dp)
+                                            .height(36.dp)
+                                            .border(1.dp, Color(0xFFD4DAE6))
+                                            .background(Color(0xFFF8FAFC))
+                                    )
+                                    Row(modifier = Modifier.horizontalScroll(horizontalScroll)) {
+                                        repeat(maxColumn) { col ->
+                                            val highlight = state.selectionState.column == col
+                                            Box(
+                                                modifier = Modifier
+                                                    .width(110.dp)
+                                                    .height(36.dp)
+                                                    .border(1.dp, Color(0xFFD4DAE6))
+                                                    .background(if (highlight) NexoraPrimary.copy(alpha = 0.18f) else Color(0xFFEFF6FF)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = columnName(col),
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    color = Color(0xFF1D4ED8)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            items(maxRow) { rowIndex ->
+                                // FIX #4: Row-level read of selectionState — only rows whose
+                                // highlight status changes will recompose their cells.
+                                val rowSelected = state.selectionState.row == rowIndex
+                                Row {
+                                    // Sticky row-number header (horizontally fixed).
+                                    Box(
+                                        modifier = Modifier
+                                            .width(46.dp)
+                                            .height(36.dp)
+                                            .border(1.dp, Color(0xFFD4DAE6))
+                                            .background(
+                                                if (rowSelected) NexoraPrimary.copy(alpha = 0.14f)
+                                                else Color(0xFFF8FAFC)
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "${rowIndex + 1}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (rowSelected) NexoraPrimary else Color(0xFF6B7280)
+                                        )
+                                    }
+                                    Row(modifier = Modifier.horizontalScroll(horizontalScroll)) {
+                                        repeat(maxColumn) { colIndex ->
+                                            val ref = CellRef(row = rowIndex, column = colIndex)
+                                            val cell = state.cells[ref]
+                                            val isSelected = selectedCell == ref
+                                            val isEditing = state.editorState.isEditing &&
+                                                state.editorState.ref == ref
+                                            val colSelected = state.selectionState.column == colIndex
+                                            val highlight = rowSelected || colSelected
+                                            // FIX #4: Direct conditional styling — no animate*AsState
+                                            // inside items lambda. At 200x26 cells the old code tracked
+                                            // 10,400 simultaneous animation states, causing frame drops.
+                                            val borderWidth = if (isSelected) 2.dp else 1.dp
+                                            val borderColor = if (isSelected) NexoraPrimary else Color(0xFFD4DAE6)
+                                            val bgColor = when {
+                                                isSelected -> NexoraPrimary.copy(alpha = 0.10f)
+                                                highlight  -> Color(0xFFF0F4FF)
+                                                else       -> Color.White
+                                            }
+                                            Box(
+                                                modifier = Modifier
+                                                    .width(110.dp)
+                                                    .height(36.dp)
+                                                    .border(borderWidth, borderColor)
+                                                    .background(bgColor)
+                                                    .combinedClickable(
+                                                        onClick = {
+                                                            controller.onCellSelected(ref)
+                                                            focusRequester.requestFocus()
+                                                        },
+                                                        onDoubleClick = {
+                                                            controller.onCellSelected(ref)
+                                                            controller.onCellTap(ref)
+                                                            focusRequester.requestFocus()
+                                                        }
+                                                    )
+                                                    .padding(horizontal = 6.dp),
+                                                contentAlignment = Alignment.CenterStart
+                                            ) {
+                                                if (isEditing) {
+                                                    CellEditorOverlay(
+                                                        value = state.editorState.text,
+                                                        onValueChange = controller.onEditorTextChange,
+                                                        onCommit = {
+                                                            controller.onCommitEdit()
+                                                            focusManager.clearFocus()
+                                                        }
+                                                    )
+                                                } else {
+                                                    Text(
+                                                        text = cell?.display.orEmpty(),
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = Color(0xFF111827),
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+}
+
+// FIX #5: Regular class, not data class. Lambda fields are never structurally equal
+// across recompositions, so a data class here makes @Stable ineffective and causes
+// SpreadsheetEditor to fully recompose every time EditorScreen emits new state.
+// The caller should wrap construction in remember { } with a stable ViewModel reference.
+@Stable
+class SpreadsheetInteractionController(
+    val onCellSelected: (CellRef) -> Unit,
+    val onCellTap: (CellRef) -> Unit,
+    val onBeginEdit: (CellRef) -> Unit,
+    val onBeginEditWithText: (String) -> Unit,
+    val onEditorTextChange: (String) -> Unit,
+    val onCommitEdit: () -> Unit,
+    val onCommitEditAndMove: (Int, Int) -> Unit,
+    val onCancelEdit: () -> Unit,
+    val onMoveSelection: (Int, Int) -> Unit,
+    val onFormulaBarChange: (String) -> Unit,
+    val onSheetSelected: (Int) -> Unit
+)
+
+@Composable
+private fun CellEditorOverlay(
+    value: String,
+    onValueChange: (String) -> Unit,
+    onCommit: () -> Unit
+) {
+    val focusRequester = remember { FocusRequester() }
+    // Cursor at end when the overlay first appears (covers the "overwrite" char scenario).
+    var fieldValue by remember(value) {
+        mutableStateOf(
+            androidx.compose.ui.text.input.TextFieldValue(
+                text = value,
+                selection = androidx.compose.ui.text.TextRange(value.length)
+            )
+        )
+    }
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
+    // FIX #11: BasicTextField instead of OutlinedTextField removes Material decoration
+    // padding that caused the row height to visually expand/contract during edit transitions.
+    androidx.compose.foundation.text.BasicTextField(
+        value = fieldValue,
+        onValueChange = { newVal ->
+            fieldValue = newVal
+            onValueChange(newVal.text)
+        },
+        singleLine = true,
+        textStyle = MaterialTheme.typography.bodySmall.copy(color = Color(0xFF111827)),
+        cursorBrush = androidx.compose.ui.graphics.SolidColor(NexoraPrimary),
+        modifier = Modifier
+            .fillMaxWidth()
+            .focusRequester(focusRequester),
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(
+            onDone = { onCommit() }
+        )
+    )
+
+@Composable
+private fun PresentationEditor(
+    activeTab: EditorTab?,
+    state: PptxUiState,
+    onSlideSelected: (Int) -> Unit,
+    onTextUpdated: (Int, Int, String) -> Unit
+) {
+    NexoraCard(contentPadding = 0.dp, modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xFFF7F7FA))
+                .padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            when {
+                state.isLoading -> {
+                    Text("Loading presentation...", color = Color(0xFF6B7280))
+                }
+                state.error != null -> {
+                    Text(state.error, color = NexoraError)
+                }
+                state.document == null -> {
+                    Text("Open a PPTX file to start editing.", color = Color(0xFF6B7280))
+                }
+                else -> {
+                    val document = state.document
+                    val slides = document.slides
+                    Column(
+                        modifier = Modifier
+                            .width(72.dp)
+                            .fillMaxHeight(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        slides.forEachIndexed { index, _ ->
+                            val selected = index == state.activeSlideIndex
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(54.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (selected) NexoraPrimary.copy(alpha = 0.2f) else Color.White)
+                                    .border(1.dp, Color(0xFFE5E7EB), RoundedCornerShape(10.dp))
+                                    .clickable { onSlideSelected(index) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(text = "${index + 1}", color = Color(0xFF111827))
+                            }
+                        }
+                    }
+
+                    val slide = slides.getOrNull(state.activeSlideIndex)
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color.White)
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = activeTab?.title ?: "Presentation",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = Color(0xFF111827)
+                        )
+                        if (slide == null) {
+                            Text("No slides available.", color = Color(0xFF6B7280))
+                        } else {
+                            slide.elements.forEach { element ->
+                                when (element) {
+                                    is PptxTextElement -> {
+                                        OutlinedTextField(
+                                            value = element.text,
+                                            onValueChange = { updated ->
+                                                onTextUpdated(slide.index, element.id, updated)
+                                            },
+                                            label = { Text("Text box") },
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
+                                    is PptxImageElement -> {
+                                        NexoraCard(contentPadding = 10.dp) {
+                                            Text(
+                                                text = "Image: ${element.description}",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = Color(0xFF6B7280)
+                                            )
+                                        }
+                                    }
+                                    else -> Unit
+                                }
+                            }
                         }
                     }
                 }
@@ -245,121 +1145,171 @@ private fun SpreadsheetEditor() {
 }
 
 @Composable
-private fun PresentationEditor() {
-    Row(
-        modifier = Modifier.fillMaxSize(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
+private fun PdfReader(activeTab: EditorTab?) {
+    val uri = activeTab?.sourcePath
+        ?.takeIf { it.startsWith("content://") }
+        ?.let(Uri::parse)
+
+    if (uri == null) {
+        NexoraCard(contentPadding = 14.dp, modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                NexoraLogoMark(size = 38.dp)
+                Text(
+                    text = "Open a PDF file to preview pages.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF6B7280)
+                )
+            }
+        }
+        return
+    }
+
+    PdfViewer(uri = uri)
+}
+
+@Composable
+private fun TextEditor(
+    activeTab: EditorTab?,
+    state: TextUiState,
+    onContentChanged: (String) -> Unit
+) {
+    NexoraCard(contentPadding = 0.dp, modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
-                .width(66.dp)
-                .fillMaxHeight(),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .fillMaxSize()
+                .background(Color(0xFFF7F7F8))
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            repeat(4) { index ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(54.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(if (index == 1) NexoraPrimary.copy(alpha = 0.34f) else MaterialTheme.colorScheme.surfaceVariant)
-                        .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.34f), RoundedCornerShape(10.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("${index + 1}", color = MaterialTheme.colorScheme.onSurface)
+            Text(
+                text = activeTab?.title ?: "Text File",
+                style = MaterialTheme.typography.titleLarge,
+                color = Color(0xFF111827)
+            )
+
+            when {
+                state.isLoading -> Text("Loading text file...", color = Color(0xFF6B7280))
+                state.error != null -> Text(state.error, color = NexoraError)
+                else -> {
+                    AndroidView(
+                        factory = { context ->
+                            CodeEditor(context).apply {
+                                setText(state.content)
+                                isEditable = true
+                                setLineNumberEnabled(true)
+                                addTextChangedListener(object : TextChangeListener {
+                                    override fun beforeTextChanged(text: Content, start: Int, count: Int, after: Int) = Unit
+
+                                    override fun onTextChanged(text: Content, start: Int, before: Int, count: Int) = Unit
+
+                                    override fun afterTextChanged(text: Content) {
+                                        onContentChanged(text.toString())
+                                    }
+                                })
+                            }
+                        },
+                        update = { editor ->
+                            val current = editor.text.toString()
+                            if (current != state.content) {
+                                editor.setText(state.content)
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(RoundedCornerShape(12.dp))
+                    )
                 }
             }
         }
+    }
+}
 
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .clip(RoundedCornerShape(18.dp))
-                .background(
-                    Brush.linearGradient(
-                        listOf(Color(0xFF8B2F1C), Color(0xFF2B1410), Color(0xFFC08457))
-                    )
-                )
-                .padding(22.dp)
-        ) {
-            Column(modifier = Modifier.align(Alignment.CenterStart)) {
+@Composable
+private fun PdfViewer(uri: Uri) {
+    val context = LocalContext.current
+    val session = remember(uri) { PdfRenderSession(context.contentResolver, uri) }
+    var pageCount by remember { mutableStateOf(0) }
+
+    LaunchedEffect(uri) {
+        session.open()
+        pageCount = session.pageCount()
+    }
+
+    DisposableEffect(uri) {
+        onDispose { session.close() }
+    }
+
+    NexoraCard(contentPadding = 0.dp, modifier = Modifier.fillMaxSize()) {
+        if (pageCount == 0) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    text = "BUSINESS PLAN",
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = Color.White
-                )
-                Text(
-                    text = "2024",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = Color.White.copy(alpha = 0.86f)
-                )
-                Text(
-                    text = "Modern - Clean - Professional",
+                    text = "Loading PDF pages...",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.72f)
+                    color = Color(0xFF6B7280)
                 )
+            }
+        } else {
+            LazyColumn(
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                itemsIndexed(List(pageCount) { it }) { index, page ->
+                    PdfPage(session = session, index = page, pageNumber = index + 1)
+                }
             }
         }
     }
 }
 
 @Composable
-private fun PdfReader() {
-    NexoraCard(contentPadding = 14.dp, modifier = Modifier.fillMaxSize()) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clip(RoundedCornerShape(14.dp))
-                .background(Color(0xFFF7F7F8))
-                .padding(22.dp)
+private fun PdfPage(session: PdfRenderSession, index: Int, pageNumber: Int) {
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White)
+            .border(1.dp, Color(0xFFE5E7EB), RoundedCornerShape(12.dp))
+            .padding(8.dp)
+    ) {
+        val density = LocalDensity.current
+        val targetWidthPx = with(density) { maxWidth.toPx().toInt().coerceAtLeast(1) }
+        val bitmapState by produceState<android.graphics.Bitmap?>(
+            initialValue = null,
+            key1 = index,
+            key2 = targetWidthPx
         ) {
-            Column(
-                modifier = Modifier.align(Alignment.TopCenter),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                NexoraLogoMark(size = 38.dp)
-                Spacer(Modifier.height(14.dp))
+            value = session.renderPage(index, targetWidthPx)
+        }
+
+        if (bitmapState == null) {
+            Box(modifier = Modifier.fillMaxWidth().height(220.dp), contentAlignment = Alignment.Center) {
                 Text(
-                    text = "Nexora Office",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = Color(0xFF111827)
-                )
-                Text(
-                    text = "User Guide",
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = Color(0xFF111827)
-                )
-                Spacer(Modifier.height(22.dp))
-                Text(
-                    text = "Get started with Nexora Office and boost your productivity.",
+                    text = "Rendering page $pageNumber",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFF374151)
+                    color = Color(0xFF6B7280)
                 )
             }
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .size(132.dp, 74.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(NexoraPrimary.copy(alpha = 0.12f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("Workspace", color = NexoraPrimary, style = MaterialTheme.typography.titleMedium)
-            }
+        } else {
+            Image(
+                bitmap = bitmapState!!.asImageBitmap(),
+                contentDescription = "PDF page $pageNumber",
+                contentScale = ContentScale.FillWidth,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     }
 }
 
 @Composable
-private fun WorkspacePanel() {
-    val files = listOf(
-        "Project Proposal.docx" to Color(0xFF2563EB),
-        "Sales Report.xlsx" to NexoraSecondary,
-        "User Guide.pdf" to NexoraError,
-        "Business Plan.pptx" to Color(0xFFF97316)
-    )
-
+private fun WorkspacePanel(
+    tabs: List<EditorTab>,
+    onSelectTab: (EditorTab) -> Unit
+) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxSize()) {
         NexoraCard(color = NexoraPrimary.copy(alpha = 0.16f)) {
             Text(
@@ -373,16 +1323,28 @@ private fun WorkspacePanel() {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        files.forEach { (name, color) ->
-            NexoraCard(contentPadding = 12.dp) {
+        tabs.forEach { tab ->
+            NexoraCard(contentPadding = 12.dp, onClick = { onSelectTab(tab) }) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    NexoraIconBadge(label = name.substringAfterLast(".").take(3).uppercase(), color = color, size = 36.dp)
+                    NexoraIconBadge(
+                        label = tab.type.badge,
+                        color = tab.type.color,
+                        size = 36.dp
+                    )
                     Spacer(Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(name, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
-                        Text("12.4 MB - active workspace", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(tab.title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                        Text(
+                            text = if (tab.sourcePath.startsWith("content://")) {
+                                "Device file - active workspace"
+                            } else {
+                                "Pro workspace tab"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
-                    Text("...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Open", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
@@ -390,19 +1352,75 @@ private fun WorkspacePanel() {
 }
 
 @Composable
-private fun EditorToolbar(activeMode: EditorMode) {
+private fun EditorToolbar(
+    activeMode: EditorMode,
+    selectedTool: String,
+    onToolSelected: (String) -> Unit
+) {
     val tools = when (activeMode) {
         EditorMode.Document -> listOf("B", "I", "U", "Align", "More")
         EditorMode.Spreadsheet -> listOf("fx", "Cells", "Sort", "Chart", "More")
         EditorMode.Presentation -> listOf("Text", "Image", "Shape", "Table", "More")
         EditorMode.Pdf -> listOf("Annotate", "Highlight", "Draw", "Text", "More")
+        EditorMode.Text -> listOf("Find", "Replace", "Indent", "Wrap", "More")
         EditorMode.Workspace -> listOf("Pin", "Recent", "Cloud", "Open", "More")
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-        tools.forEachIndexed { index, label ->
-            NexoraToolbarButton(label = label, selected = index == 0)
+        tools.forEach { label ->
+            NexoraToolbarButton(
+                label = label,
+                selected = selectedTool == label,
+                onClick = { onToolSelected(label) }
+            )
         }
     }
+}
+
+private data class DocxUiState(
+    val isLoading: Boolean = false,
+    val error: String? = null,
+    val document: DocxDocument? = null,
+    val editText: String = "",
+    val isEditing: Boolean = false
+)
+
+private data class PptxUiState(
+    val isLoading: Boolean = false,
+    val error: String? = null,
+    val document: PptxDocument? = null,
+    val activeSlideIndex: Int = 0
+)
+
+private data class TextUiState(
+    val isLoading: Boolean = false,
+    val error: String? = null,
+    val content: String = ""
+)
+
+private fun PptxUiState.updateText(slideIndex: Int, elementId: Int, updated: String): PptxUiState {
+    val document = document ?: return this
+    val updatedSlides = document.slides.mapIndexed { index, slide ->
+        if (index != slideIndex) return@mapIndexed slide
+        val updatedElements = slide.elements.map { element ->
+            if (element is PptxTextElement && element.id == elementId) {
+                element.copy(text = updated)
+            } else {
+                element
+            }
+        }
+        slide.copy(elements = updatedElements)
+    }
+    return copy(document = document.copy(slides = updatedSlides))
+}
+
+private fun columnName(index: Int): String {
+    var value = index
+    val result = StringBuilder()
+    do {
+        result.append(('A'.code + (value % 26)).toChar())
+        value = value / 26 - 1
+    } while (value >= 0)
+    return result.reverse().toString()
 }
 
 private enum class EditorMode(
@@ -413,5 +1431,41 @@ private enum class EditorMode(
     Spreadsheet("Sheet", "Sales Report.xlsx"),
     Presentation("Slides", "Business Plan.pptx"),
     Pdf("PDF", "User Guide.pdf"),
+    Text("Text", "Notes.txt"),
     Workspace("Workspace", "Workspace")
 }
+
+private fun WorkspaceFile.toEditorTab(): EditorTab = EditorTab(
+    fileId = id,
+    title = name,
+    dirty = false,
+    type = type,
+    sourcePath = path
+)
+
+private fun DocumentType?.toEditorMode(): EditorMode = when (this) {
+    DocumentType.SHEET -> EditorMode.Spreadsheet
+    DocumentType.SLIDE -> EditorMode.Presentation
+    DocumentType.PDF -> EditorMode.Pdf
+    DocumentType.TEXT -> EditorMode.Text
+    DocumentType.DOC, null -> EditorMode.Document
+}
+
+private val DocumentType.badge: String
+    get() = when (this) {
+        DocumentType.DOC -> "D"
+        DocumentType.SHEET -> "S"
+        DocumentType.SLIDE -> "P"
+        DocumentType.PDF -> "PDF"
+        DocumentType.TEXT -> "TXT"
+    }
+
+private val DocumentType.color: Color
+    @Composable
+    get() = when (this) {
+        DocumentType.DOC -> Color(0xFF2563EB)
+        DocumentType.SHEET -> NexoraSecondary
+        DocumentType.SLIDE -> Color(0xFFF97316)
+        DocumentType.PDF -> NexoraError
+        DocumentType.TEXT -> NexoraPrimaryVariant
+    }

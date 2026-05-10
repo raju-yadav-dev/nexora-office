@@ -44,8 +44,9 @@ import com.nexora.core.designsystem.theme.NexoraSecondary
 @Composable
 fun ProfileScreen() {
     var darkModePreview by remember { mutableStateOf(true) }
+    var selectedMenu by remember { mutableStateOf("Cloud Storage") }
     val menuItems = listOf(
-        ProfileMenuItem("Cloud Storage", "2.45 GB / 10 GB", "C", NexoraSecondary),
+        ProfileMenuItem("Cloud Storage", "Pro sync active", "C", NexoraSecondary),
         ProfileMenuItem("My Templates", "18 saved", "T", NexoraPrimary),
         ProfileMenuItem("My Documents", "128 files", "D", Color(0xFF2563EB)),
         ProfileMenuItem("Recycle Bin", "3 items", "R", NexoraError),
@@ -65,7 +66,7 @@ fun ProfileScreen() {
             }
 
             item {
-                PremiumCard()
+                ProAccessCard()
             }
 
             item {
@@ -95,7 +96,12 @@ fun ProfileScreen() {
             }
 
             items(menuItems.size) { index ->
-                ProfileMenuRow(item = menuItems[index])
+                val item = menuItems[index]
+                ProfileMenuRow(
+                    item = item,
+                    selected = selectedMenu == item.title,
+                    onClick = { selectedMenu = item.title }
+                )
             }
         }
     }
@@ -152,7 +158,7 @@ private fun ProfileHeader() {
 }
 
 @Composable
-private fun PremiumCard() {
+private fun ProAccessCard() {
     NexoraCard(
         color = NexoraPrimary.copy(alpha = 0.2f),
         contentPadding = 16.dp
@@ -162,17 +168,17 @@ private fun PremiumCard() {
             Spacer(Modifier.width(13.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Go Premium",
+                    text = "Pro access active",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "Unlock every workspace feature",
+                    text = "Every user gets all workspace features for now",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Text(">", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleLarge)
+            Text("On", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
         }
     }
 }
@@ -188,7 +194,7 @@ private fun StorageCard() {
                 modifier = Modifier.weight(1f)
             )
             Text(
-                text = "2.45 GB / 10 GB",
+                text = "2.45 GB / Pro",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -207,8 +213,20 @@ private fun StorageCard() {
 }
 
 @Composable
-private fun ProfileMenuRow(item: ProfileMenuItem) {
-    NexoraCard(contentPadding = 12.dp) {
+private fun ProfileMenuRow(
+    item: ProfileMenuItem,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    NexoraCard(
+        contentPadding = 12.dp,
+        color = if (selected) {
+            item.color.copy(alpha = 0.18f)
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
+        },
+        onClick = onClick
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             NexoraIconBadge(label = item.badge, color = item.color, size = 34.dp)
             Spacer(Modifier.width(12.dp))
@@ -228,7 +246,11 @@ private fun ProfileMenuRow(item: ProfileMenuItem) {
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            Text(">", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                text = if (selected) "Open" else ">",
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelLarge
+            )
         }
     }
 }

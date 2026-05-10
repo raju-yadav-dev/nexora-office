@@ -39,20 +39,27 @@ import com.nexora.core.designsystem.component.NexoraSectionHeader
 import com.nexora.core.designsystem.theme.NexoraError
 import com.nexora.core.designsystem.theme.NexoraPrimary
 import com.nexora.core.designsystem.theme.NexoraSecondary
+import com.nexora.core.model.DocumentType
+import com.nexora.core.model.WorkspaceFile
 
 @Composable
 fun TemplatesScreen(
-    onOpenTemplate: () -> Unit
+    onOpenTemplate: (WorkspaceFile) -> Unit
 ) {
     var selectedCategory by remember { mutableStateOf("All") }
+    var searchQuery by remember { mutableStateOf("") }
     val templates = listOf(
-        Template("Resume", "Doc", Color(0xFF2563EB), listOf(Color.White, Color(0xFFE8ECF8))),
-        Template("Project Report", "PDF", Color(0xFF1D4ED8), listOf(Color(0xFF0F2557), Color(0xFF3B82F6))),
-        Template("Business Plan", "Doc", Color(0xFF2563EB), listOf(Color.White, Color(0xFFF2F4F7))),
-        Template("Agreement", "PDF", NexoraError, listOf(Color.White, Color(0xFFFFE4E6))),
-        Template("Sales Tracker", "Sheet", NexoraSecondary, listOf(Color.White, Color(0xFFE0FBEF))),
-        Template("Pitch Deck", "PPT", Color(0xFFF97316), listOf(Color(0xFF341A12), Color(0xFFB45309)))
+        Template("Resume", "Resume", "Doc", DocumentType.DOC, Color(0xFF2563EB), listOf(Color.White, Color(0xFFE8ECF8))),
+        Template("Project Report", "Report", "PDF", DocumentType.PDF, Color(0xFF1D4ED8), listOf(Color(0xFF0F2557), Color(0xFF3B82F6))),
+        Template("Business Plan", "Business", "Doc", DocumentType.DOC, Color(0xFF2563EB), listOf(Color.White, Color(0xFFF2F4F7))),
+        Template("Agreement", "Business", "PDF", DocumentType.PDF, NexoraError, listOf(Color.White, Color(0xFFFFE4E6))),
+        Template("Sales Tracker", "Business", "Sheet", DocumentType.SHEET, NexoraSecondary, listOf(Color.White, Color(0xFFE0FBEF))),
+        Template("Pitch Deck", "Business", "PPT", DocumentType.SLIDE, Color(0xFFF97316), listOf(Color(0xFF341A12), Color(0xFFB45309)))
     )
+    val visibleTemplates = templates.filter { template ->
+        (selectedCategory == "All" || template.category == selectedCategory) &&
+            (searchQuery.isBlank() || template.title.contains(searchQuery, ignoreCase = true))
+    }
 
     NexoraGradientBackground(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
@@ -67,7 +74,11 @@ fun TemplatesScreen(
                         style = MaterialTheme.typography.headlineSmall,
                         color = MaterialTheme.colorScheme.onBackground
                     )
-                    NexoraSearchField(placeholder = "Search templates")
+                    NexoraSearchField(
+                        placeholder = "Search templates",
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it }
+                    )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf("All", "Resume", "Report", "Business").forEach { category ->
                             NexoraPill(
@@ -81,23 +92,36 @@ fun TemplatesScreen(
             }
 
             item {
-                NexoraSectionHeader(title = "Recommended", action = "See all")
+                NexoraSectionHeader(
+                    title = "Recommended",
+                    action = "See all",
+                    onAction = {
+                        selectedCategory = "All"
+                        searchQuery = ""
+                    }
+                )
             }
 
             item {
                 TemplateGrid(
-                    templates = templates.take(3),
+                    templates = visibleTemplates.take(3),
                     onOpenTemplate = onOpenTemplate
                 )
             }
 
             item {
-                NexoraSectionHeader(title = "Documents", action = "See all")
+                NexoraSectionHeader(
+                    title = "Documents",
+                    action = if (visibleTemplates.size > 3) "Show all" else null,
+                    onAction = {
+                        selectedCategory = "All"
+                    }
+                )
             }
 
             item {
                 TemplateGrid(
-                    templates = templates.drop(3).take(3),
+                    templates = visibleTemplates.drop(3).ifEmpty { visibleTemplates.take(3) },
                     onOpenTemplate = onOpenTemplate
                 )
             }
@@ -108,16 +132,25 @@ fun TemplatesScreen(
 @Composable
 private fun TemplateGrid(
     templates: List<Template>,
-    onOpenTemplate: () -> Unit
+    onOpenTemplate: (WorkspaceFile) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (templates.isEmpty()) {
+            NexoraCard(contentPadding = 14.dp) {
+                Text(
+                    text = "No templates found",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
         templates.chunked(3).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 row.forEach { template ->
                     TemplateCard(
                         template = template,
                         modifier = Modifier.weight(1f),
-                        onClick = onOpenTemplate
+                        onClick = { onOpenTemplate(template.toWorkspaceFile()) }
                     )
                 }
                 repeat(3 - row.size) {
@@ -188,7 +221,25 @@ private fun TemplateCard(
 
 private data class Template(
     val title: String,
+    val category: String,
     val badge: String,
+    val type: DocumentType,
     val accent: Color,
     val previewColors: List<Color>
 )
+
+private fun Template.toWorkspaceFile(): WorkspaceFile {
+    val extension = when (type) {
+        DocumentType.DOC -> "docx"
+        DocumentType.SHEET -> "xlsx"
+        DocumentType.SLIDE -> "pptx"
+        DocumentType.PDF -> "pdf"
+        DocumentType.TEXT -> "txt"
+    }
+    return WorkspaceFile(
+        name = "$title.$extension",
+        path = "nexora://templates/${title.lowercase().replace(" ", "-")}",
+        type = type,
+        sizeLabel = "Template"
+    )
+}

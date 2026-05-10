@@ -1,6 +1,7 @@
 package com.nexora.app
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -13,10 +14,14 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -27,6 +32,7 @@ import androidx.navigation.compose.rememberNavController
 import com.nexora.core.designsystem.component.NexoraLogoMark
 import com.nexora.core.navigation.NexoraDestination
 import com.nexora.core.navigation.NexoraNavHost
+import kotlin.math.abs
 
 @Composable
 fun NexoraApp() {
@@ -34,6 +40,31 @@ fun NexoraApp() {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route ?: NexoraDestination.Dashboard.route
     val showBottomBar = topLevelItems.any { it.route == currentRoute }
+    var dragTotal by remember(currentRoute) { mutableStateOf(0f) }
+    val swipeTabsModifier = if (showBottomBar) {
+        Modifier.pointerInput(currentRoute) {
+            detectHorizontalDragGestures(
+                onHorizontalDrag = { _, dragAmount ->
+                    dragTotal += dragAmount
+                },
+                onDragEnd = {
+                    val currentIndex = topLevelItems.indexOfFirst { it.route == currentRoute }
+                    if (currentIndex >= 0 && abs(dragTotal) > 96f) {
+                        val nextIndex = if (dragTotal < 0f) currentIndex + 1 else currentIndex - 1
+                        topLevelItems.getOrNull(nextIndex)?.let { item ->
+                            navController.navigateTopLevel(item.route)
+                        }
+                    }
+                    dragTotal = 0f
+                },
+                onDragCancel = {
+                    dragTotal = 0f
+                }
+            )
+        }
+    } else {
+        Modifier
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -49,7 +80,9 @@ fun NexoraApp() {
     ) { innerPadding ->
         NexoraNavHost(
             navController = navController,
-            modifier = Modifier.padding(innerPadding)
+            modifier = Modifier
+                .padding(innerPadding)
+                .then(swipeTabsModifier)
         )
     }
 }
@@ -69,13 +102,7 @@ private fun NexoraBottomBar(
             NavigationBarItem(
                 selected = selected,
                 onClick = {
-                    navController.navigate(item.route) {
-                        popUpTo(navController.graph.findStartDestination().id) {
-                            saveState = true
-                        }
-                        launchSingleTop = true
-                        restoreState = true
-                    }
+                    navController.navigateTopLevel(item.route)
                 },
                 icon = {
                     NexoraNavGlyph(label = item.glyph, selected = selected)
@@ -144,3 +171,13 @@ private data class TopLevelItem(
     val glyph: String,
     val route: String
 )
+
+private fun NavHostController.navigateTopLevel(route: String) {
+    navigate(route) {
+        popUpTo(graph.findStartDestination().id) {
+            saveState = true
+        }
+        launchSingleTop = true
+        restoreState = true
+    }
+}
