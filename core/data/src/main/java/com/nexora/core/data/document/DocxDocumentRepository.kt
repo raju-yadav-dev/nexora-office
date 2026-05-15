@@ -2,6 +2,7 @@ package com.nexora.core.data.document
 
 import android.content.ContentResolver
 import android.net.Uri
+import com.nexora.core.common.logging.NexoraLogger
 import com.nexora.core.model.DocxDocument
 import com.nexora.core.model.DocumentBlock
 import com.nexora.core.model.HeadingBlock
@@ -16,11 +17,14 @@ import kotlinx.coroutines.withContext
 import org.apache.poi.xwpf.usermodel.UnderlinePatterns
 import org.apache.poi.xwpf.usermodel.XWPFDocument
 import org.apache.poi.xwpf.usermodel.XWPFParagraph
-import org.apache.poi.xwpf.usermodel.XWPFParagraphAlignment
+import org.apache.poi.xwpf.usermodel.ParagraphAlignment as XwpfParagraphAlignment
 
 class DocxDocumentRepository {
+    private val logTag = "DocxDocumentRepository"
+
     suspend fun loadDocx(contentResolver: ContentResolver, uri: Uri): DocxDocument =
         withContext(Dispatchers.IO) {
+            NexoraLogger.d(logTag, "Loading DOCX: $uri")
             contentResolver.openInputStream(uri)?.use { input ->
                 val document = XWPFDocument(input)
                 val blocks = mutableListOf<DocumentBlock>()
@@ -46,7 +50,7 @@ class DocxDocumentRepository {
                                 blocks.add(
                                     ParagraphBlock(
                                         runs = runs,
-                                        alignment = bodyElement.paragraphAlignment.toParagraphAlignment(),
+                                            alignment = bodyElement.alignment.toParagraphAlignment(),
                                         listStyle = listStyle
                                     )
                                 )
@@ -78,6 +82,7 @@ class DocxDocumentRepository {
 
     suspend fun saveDocx(contentResolver: ContentResolver, uri: Uri, document: DocxDocument) {
         withContext(Dispatchers.IO) {
+            NexoraLogger.d(logTag, "Saving DOCX: $uri")
             val outputStream = contentResolver.openOutputStream(uri, "wt") ?: return@withContext
             outputStream.use { output ->
                 val docx = XWPFDocument()
@@ -88,7 +93,7 @@ class DocxDocumentRepository {
                             paragraph.style = "Heading${block.level.coerceIn(1, 6)}"
                             block.runs.forEach { run ->
                                 paragraph.createRun().apply {
-                                    text = run.text
+                                    setText(run.text)
                                     isBold = run.bold
                                     isItalic = run.italic
                                     underline = if (run.underline) UnderlinePatterns.SINGLE else UnderlinePatterns.NONE
@@ -100,7 +105,7 @@ class DocxDocumentRepository {
                             paragraph.alignment = block.alignment.toXwpfAlignment()
                             block.runs.forEach { run ->
                                 paragraph.createRun().apply {
-                                    text = run.text
+                                    setText(run.text)
                                     isBold = run.bold
                                     isItalic = run.italic
                                     underline = if (run.underline) UnderlinePatterns.SINGLE else UnderlinePatterns.NONE
@@ -119,7 +124,7 @@ class DocxDocumentRepository {
                         }
                         is ImageBlock -> {
                             val paragraph = docx.createParagraph()
-                            paragraph.createRun().text = "[Image: ${block.description}]"
+                            paragraph.createRun().setText("[Image: ${block.description}]")
                         }
                         else -> Unit
                     }
@@ -137,18 +142,18 @@ private fun XWPFParagraph.headingLevel(): Int? {
 }
 
 private fun org.apache.poi.xwpf.usermodel.XWPFRun.textValue(): String? =
-    getText(0) ?: text()
+    getText(0)
 
-private fun XWPFParagraphAlignment.toParagraphAlignment(): ParagraphAlignment = when (this) {
-    XWPFParagraphAlignment.CENTER -> ParagraphAlignment.CENTER
-    XWPFParagraphAlignment.RIGHT -> ParagraphAlignment.END
-    XWPFParagraphAlignment.BOTH -> ParagraphAlignment.JUSTIFY
+private fun XwpfParagraphAlignment.toParagraphAlignment(): ParagraphAlignment = when (this) {
+    XwpfParagraphAlignment.CENTER -> ParagraphAlignment.CENTER
+    XwpfParagraphAlignment.RIGHT -> ParagraphAlignment.END
+    XwpfParagraphAlignment.BOTH -> ParagraphAlignment.JUSTIFY
     else -> ParagraphAlignment.START
 }
 
-private fun ParagraphAlignment.toXwpfAlignment(): XWPFParagraphAlignment = when (this) {
-    ParagraphAlignment.CENTER -> XWPFParagraphAlignment.CENTER
-    ParagraphAlignment.END -> XWPFParagraphAlignment.RIGHT
-    ParagraphAlignment.JUSTIFY -> XWPFParagraphAlignment.BOTH
-    ParagraphAlignment.START -> XWPFParagraphAlignment.LEFT
+private fun ParagraphAlignment.toXwpfAlignment(): XwpfParagraphAlignment = when (this) {
+    ParagraphAlignment.CENTER -> XwpfParagraphAlignment.CENTER
+    ParagraphAlignment.END -> XwpfParagraphAlignment.RIGHT
+    ParagraphAlignment.JUSTIFY -> XwpfParagraphAlignment.BOTH
+    ParagraphAlignment.START -> XwpfParagraphAlignment.LEFT
 }

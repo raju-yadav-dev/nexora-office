@@ -7,6 +7,7 @@ import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.util.LruCache
+import com.nexora.core.common.logging.NexoraLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
@@ -14,22 +15,25 @@ import kotlin.math.roundToInt
 class PdfRenderSession(
     private val contentResolver: ContentResolver,
     private val uri: Uri
-) : AutoCloseable {
+) : PdfPageRenderer {
+    private val logTag = "PdfRenderSession"
     private var fileDescriptor: ParcelFileDescriptor? = null
     private var renderer: PdfRenderer? = null
     private val cache = LruCache<Int, Bitmap>(12)
 
-    suspend fun open(): PdfRenderSession = withContext(Dispatchers.IO) {
+    override suspend fun open(): PdfRenderSession = withContext(Dispatchers.IO) {
         if (renderer == null) {
+            NexoraLogger.d(logTag, "Opening PDF renderer for $uri")
             fileDescriptor = contentResolver.openFileDescriptor(uri, "r")
-            renderer = fileDescriptor?.let { PdfRenderer(it) }
+            val descriptor = fileDescriptor ?: error("Unable to open PDF file")
+            renderer = PdfRenderer(descriptor)
         }
         this@PdfRenderSession
     }
 
-    fun pageCount(): Int = renderer?.pageCount ?: 0
+    override fun pageCount(): Int = renderer?.pageCount ?: 0
 
-    suspend fun renderPage(index: Int, targetWidthPx: Int): Bitmap? = withContext(Dispatchers.IO) {
+    override suspend fun renderPage(index: Int, targetWidthPx: Int): Bitmap? = withContext(Dispatchers.IO) {
         val cached = cache.get(index)
         if (cached != null) return@withContext cached
         val pdfRenderer = renderer ?: return@withContext null
@@ -53,5 +57,6 @@ class PdfRenderSession(
         renderer = null
         fileDescriptor = null
         cache.evictAll()
+        NexoraLogger.d(logTag, "Closed PDF renderer for $uri")
     }
 }

@@ -171,7 +171,7 @@ jobs:
         if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_variant == 'debug' || github.event.inputs.build_variant == 'all' }}
         run: ${{ steps.gradle_cmd.outputs.cmd }} --stacktrace :app:assembleDebug
 
-      - name: Build release APK + AAB
+      - name: Build release APK
         if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_variant == 'release' || github.event.inputs.build_variant == 'all' }}
         env:
           # Secure environment variable mapping (from repository secrets)
@@ -180,7 +180,7 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           NEXORA_VERSION_NAME: ${{ needs.prepare.outputs.version_name }}
-        run: ${{ steps.gradle_cmd.outputs.cmd }} --stacktrace :app:assembleRelease :app:bundleRelease
+        run: ${{ steps.gradle_cmd.outputs.cmd }} --stacktrace :app:assembleRelease
 
       - name: Upload debug APK
         if: always()
@@ -197,15 +197,6 @@ jobs:
         with:
           name: ${{ needs.prepare.outputs.artifact_prefix }}-release-apk
           path: app/build/outputs/apk/release/*.apk
-          if-no-files-found: warn
-          retention-days: 30
-
-      - name: Upload release AAB
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ needs.prepare.outputs.artifact_prefix }}-release-aab
-          path: app/build/outputs/bundle/release/*.aab
           if-no-files-found: warn
           retention-days: 30
 

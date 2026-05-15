@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,12 +50,15 @@ import com.nexora.core.designsystem.theme.NexoraPrimaryVariant
 import com.nexora.core.designsystem.theme.NexoraSecondary
 import com.nexora.core.model.DocumentType
 import com.nexora.core.model.WorkspaceFile
+import androidx.hilt.navigation.compose.hiltViewModel
 
 @Composable
 fun DashboardScreen(
     onOpenFileManager: () -> Unit,
     onOpenEditor: (WorkspaceFile) -> Unit
 ) {
+    val viewModel: DashboardViewModel = hiltViewModel()
+    val state by viewModel.state.collectAsState()
     var selectedFilter by remember { mutableStateOf("Recent") }
     var searchQuery by remember { mutableStateOf("") }
     val quickActions = listOf(
@@ -63,24 +67,14 @@ fun DashboardScreen(
         QuickCreate("Slides", "P", Color(0xFFF97316), DocumentType.SLIDE, "Untitled Presentation.pptx"),
         QuickCreate("PDF", "PDF", NexoraError, DocumentType.PDF, "Untitled PDF.pdf")
     )
-    val recentFiles = listOf(
-        OfficeFile("Project Proposal.docx", "12.4 MB", "2m ago", "D", Color(0xFF2563EB), true, true, DocumentType.DOC),
-        OfficeFile("Monthly Report.xlsx", "850 KB", "1h ago", "S", NexoraSecondary, false, true, DocumentType.SHEET),
-        OfficeFile("Business Plan.pptx", "3.2 MB", "Yesterday", "P", Color(0xFFF97316), true, false, DocumentType.SLIDE),
-        OfficeFile("Contract Agreement.pdf", "1.5 MB", "Yesterday", "PDF", NexoraError, false, false, DocumentType.PDF),
-        OfficeFile("User Guide.docx", "2.1 MB", "2 days ago", "D", Color(0xFF2563EB), false, true, DocumentType.DOC)
-    )
-    val visibleRecentFiles = recentFiles
+    val visibleRecentFiles = state.recentFiles
         .filter { file ->
             when (selectedFilter) {
-                "Starred" -> file.starred
-                "Cloud" -> file.cloudBacked
+                "Starred" -> file.isPinned
                 else -> true
             }
         }
-        .filter { file ->
-            searchQuery.isBlank() || file.name.contains(searchQuery, ignoreCase = true)
-        }
+        .filter { file -> searchQuery.isBlank() || file.name.contains(searchQuery, ignoreCase = true) }
 
     NexoraGradientBackground(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
@@ -104,13 +98,13 @@ fun DashboardScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     NexoraMetricCard(
                         label = "Today",
-                        value = "18",
+                        value = visibleRecentFiles.size.toString(),
                         accent = NexoraPrimary,
                         modifier = Modifier.weight(1f)
                     )
                     NexoraMetricCard(
-                        label = "Cloud",
-                        value = "2.45 GB",
+                        label = "Pinned",
+                        value = state.recentFiles.count { it.isPinned }.toString(),
                         accent = NexoraSecondary,
                         modifier = Modifier.weight(1f)
                     )
@@ -128,6 +122,36 @@ fun DashboardScreen(
                                 ?.let { onOpenEditor(it.toWorkspaceFile()) }
                         }
                     )
+                }
+            }
+
+            item {
+                NexoraCard(
+                    color = NexoraPrimary.copy(alpha = 0.16f),
+                    contentPadding = 14.dp,
+                    onClick = onOpenFileManager
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        NexoraIconBadge(label = "Open", color = NexoraPrimaryVariant, size = 42.dp)
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Open local files",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Browse device storage and recent documents",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            text = "Browse",
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                    }
                 }
             }
 
@@ -174,7 +198,7 @@ fun DashboardScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     NexoraSectionHeader(title = "Recent Files", action = "See all", onAction = onOpenFileManager)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf("Recent", "Starred", "Cloud").forEach { label ->
+                        listOf("Recent", "Starred").forEach { label ->
                             NexoraPill(
                                 label = label,
                                 selected = selectedFilter == label,
@@ -203,7 +227,7 @@ fun DashboardScreen(
             }
 
             items(visibleRecentFiles) { file ->
-                OfficeFileRow(file = file, onClick = { onOpenEditor(file.toWorkspaceFile()) })
+                OfficeFileRow(file = file, onClick = { onOpenEditor(file) })
             }
         }
     }
@@ -243,7 +267,7 @@ private fun DashboardHeader() {
 
 @Composable
 private fun OfficeFileRow(
-    file: OfficeFile,
+    file: WorkspaceFile,
     onClick: () -> Unit
 ) {
     NexoraCard(
@@ -252,7 +276,7 @@ private fun OfficeFileRow(
         contentPadding = 12.dp
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            NexoraIconBadge(label = file.badge, color = file.color, size = 38.dp)
+            NexoraIconBadge(label = file.type.badge, color = file.type.color, size = 38.dp)
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -264,7 +288,7 @@ private fun OfficeFileRow(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
-                    if (file.starred) {
+                    if (file.isPinned) {
                         Box(
                             modifier = Modifier
                                 .size(6.dp)
@@ -275,7 +299,9 @@ private fun OfficeFileRow(
                 }
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    text = "${file.size} - ${file.modified}",
+                    text = listOfNotNull(file.sizeLabel.takeIf { it.isNotBlank() }, file.lastModified.takeIf { it.isNotBlank() })
+                        .ifEmpty { listOf("Updated recently") }
+                        .joinToString(" - "),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1
@@ -291,17 +317,6 @@ private fun OfficeFileRow(
     }
 }
 
-private data class OfficeFile(
-    val name: String,
-    val size: String,
-    val modified: String,
-    val badge: String,
-    val color: Color,
-    val starred: Boolean,
-    val cloudBacked: Boolean,
-    val type: DocumentType
-)
-
 private data class QuickCreate(
     val title: String,
     val badge: String,
@@ -316,14 +331,24 @@ private data class QuickCreate(
         name = fileName,
         path = "nexora://workspace/create/${title.lowercase()}",
         type = type,
-        sizeLabel = "New Pro file"
+        sizeLabel = "New document"
     )
 }
 
-private fun OfficeFile.toWorkspaceFile(): WorkspaceFile = WorkspaceFile(
-    name = name,
-    path = if (cloudBacked) "/cloud/Recent" else "/local/Recent",
-    type = type,
-    sizeLabel = size,
-    isPinned = starred
-)
+private val DocumentType.badge: String
+    get() = when (this) {
+        DocumentType.DOC -> "D"
+        DocumentType.SHEET -> "S"
+        DocumentType.SLIDE -> "P"
+        DocumentType.PDF -> "PDF"
+        DocumentType.TEXT -> "TXT"
+    }
+
+private val DocumentType.color: Color
+    get() = when (this) {
+        DocumentType.DOC -> Color(0xFF2563EB)
+        DocumentType.SHEET -> NexoraSecondary
+        DocumentType.SLIDE -> Color(0xFFF97316)
+        DocumentType.PDF -> NexoraError
+        DocumentType.TEXT -> Color(0xFF14B8A6)
+    }

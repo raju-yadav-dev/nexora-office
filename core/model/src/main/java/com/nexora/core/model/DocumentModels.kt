@@ -14,6 +14,12 @@ enum class DocumentType {
 }
 
 @Serializable
+enum class DocumentAccessMode {
+    READ,
+    READ_WRITE
+}
+
+@Serializable
 data class DocxDocument(
     val blocks: List<DocumentBlock> = emptyList()
 )
@@ -134,10 +140,30 @@ data class WorkspaceFile(
 )
 
 @Serializable
+data class PersistedUriPermission(
+    val uri: String,
+    val persistedAt: String = Instant.now().toString(),
+    val accessMode: DocumentAccessMode = DocumentAccessMode.READ_WRITE,
+    val isTree: Boolean = false
+)
+
+@Serializable
 data class EditorTab(
     val fileId: String,
     val title: String,
     val dirty: Boolean,
     val type: DocumentType = DocumentType.DOC,
     val sourcePath: String = ""
+)
+
+@Serializable
+data class DocumentSession(
+    val sessionId: String,
+    val fileUri: String?,
+    val title: String,
+    val type: DocumentType,
+    val lastActiveAt: Long,
+    val dirty: Boolean,
+    val autosavePayload: String? = null,
+    val recoveryPayload: String? = null
 )

@@ -1,11 +1,13 @@
 package com.nexora.feature.editor
 
 import android.net.Uri
+import android.view.KeyEvent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -21,7 +23,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.stickyHeader
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -49,7 +50,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.focus.focusable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,8 +57,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.AnnotatedString
@@ -73,9 +71,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.animation.animateColorAsState
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import com.nexora.core.designsystem.component.NexoraCard
 import com.nexora.core.designsystem.component.NexoraGradientBackground
 import com.nexora.core.designsystem.component.NexoraIconBadge
@@ -86,12 +85,15 @@ import com.nexora.core.designsystem.theme.NexoraError
 import com.nexora.core.designsystem.theme.NexoraPrimary
 import com.nexora.core.designsystem.theme.NexoraPrimaryVariant
 import com.nexora.core.designsystem.theme.NexoraSecondary
+import com.nexora.core.common.logging.NexoraLogger
 import com.nexora.core.data.document.DocxDocumentRepository
 import com.nexora.core.data.document.PptxDocumentRepository
-import com.nexora.core.data.document.PdfRenderSession
+import com.nexora.core.data.document.HybridPdfRenderSession
+import com.nexora.core.data.document.PdfPageRenderer
 import com.nexora.core.data.document.TextDocumentRepository
 import com.nexora.core.data.document.XlsxDocumentRepository
 import com.nexora.core.model.DocumentType
+import com.nexora.core.model.DocxDocument
 import com.nexora.core.model.CellRef
 import com.nexora.core.model.DocumentBlock
 import com.nexora.core.model.HeadingBlock
@@ -106,9 +108,7 @@ import com.nexora.core.model.TableBlock
 import com.nexora.core.model.TextRun
 import com.nexora.core.model.EditorTab
 import com.nexora.core.model.WorkspaceFile
-import io.github.rosemoe.sora.text.Content
-import io.github.rosemoe.sora.text.TextChangeListener
-import io.github.rosemoe.sora.widget.CodeEditor
+import androidx.hilt.navigation.compose.hiltViewModel
 import kotlinx.coroutines.launch
 
 @Composable
@@ -118,7 +118,8 @@ fun EditorScreen(
 ) {
     val context = LocalContext.current
     val contentResolver = context.contentResolver
-    val engine = remember { EditorEngine() }
+    val editorViewModel: EditorViewModel = hiltViewModel()
+    val docxRepository = remember { DocxDocumentRepository() }
     val xlsxRepository = remember { XlsxDocumentRepository() }
     val pptxRepository = remember { PptxDocumentRepository() }
     val textRepository = remember { TextDocumentRepository() }
@@ -126,15 +127,9 @@ fun EditorScreen(
         factory = SpreadsheetViewModelFactory(xlsxRepository)
     )
     val scope = rememberCoroutineScope()
-    val initialTabs = remember {
-        listOf(
-            EditorTab(fileId = "proposal", title = "Proposal.docx", dirty = false, type = DocumentType.DOC),
-            EditorTab(fileId = "report", title = "Report.xlsx", dirty = true, type = DocumentType.SHEET),
-            EditorTab(fileId = "guide", title = "Guide.pdf", dirty = false, type = DocumentType.PDF)
-        )
-    }
-    val state by engine.state.collectAsState()
+    val state by editorViewModel.state.collectAsState()
     val activeTab = state.tabs.firstOrNull { it.fileId == state.activeTabId }
+    val activeSession = state.sessions.firstOrNull { it.sessionId == activeTab?.fileId }
     var activeMode by remember(openedFile?.id) {
         mutableStateOf(openedFile?.type.toEditorMode())
     }
@@ -143,11 +138,87 @@ fun EditorScreen(
     var pptxState by remember { mutableStateOf(PptxUiState()) }
     var textState by remember { mutableStateOf(TextUiState()) }
     val spreadsheetState by spreadsheetViewModel.state.collectAsState()
+    var editorError by remember { mutableStateOf<String?>(null) }
+
+    val docxSaveAsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    ) { uri ->
+        val tab = activeTab ?: return@rememberLauncherForActivityResult
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            runCatching {
+                val updatedDocument = docxState.document?.let { existing ->
+                    if (docxState.isEditing) docxState.editText.toDocxDocument() else existing
+                } ?: return@runCatching
+                docxRepository.saveDocx(contentResolver, uri, updatedDocument)
+                editorViewModel.updateFileMetadata(tab.fileId, uri.toString(), tab.title, DocumentType.DOC)
+                editorViewModel.markDirty(tab.fileId, false)
+            }.onFailure { error ->
+                NexoraLogger.e("EditorScreen", "Save As DOCX failed", error)
+                editorError = error.message ?: "Save As failed"
+            }
+        }
+    }
+
+    val textSaveAsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
+        val tab = activeTab ?: return@rememberLauncherForActivityResult
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            runCatching {
+                textRepository.saveText(contentResolver, uri, textState.content)
+                editorViewModel.updateFileMetadata(tab.fileId, uri.toString(), tab.title, DocumentType.TEXT)
+                editorViewModel.markDirty(tab.fileId, false)
+            }.onFailure { error ->
+                NexoraLogger.e("EditorScreen", "Save As text failed", error)
+                editorError = error.message ?: "Save As failed"
+            }
+        }
+    }
+
+    val pdfSaveAsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/pdf")
+    ) { uri ->
+        val tab = activeTab ?: return@rememberLauncherForActivityResult
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            runCatching {
+                val sourceUri = tab.sourcePath.takeIf { it.startsWith("content://") }?.let(Uri::parse)
+                    ?: error("PDF source is not available")
+                copyDocument(contentResolver, sourceUri, uri)
+                editorViewModel.updateFileMetadata(tab.fileId, uri.toString(), tab.title, DocumentType.PDF)
+                editorViewModel.markDirty(tab.fileId, false)
+            }.onFailure { error ->
+                NexoraLogger.e("EditorScreen", "Save As PDF failed", error)
+                editorError = error.message ?: "Save As failed"
+            }
+        }
+    }
+
+    val xlsxSaveAsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    ) { uri ->
+        val tab = activeTab ?: return@rememberLauncherForActivityResult
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            runCatching {
+                spreadsheetViewModel.save({ contentResolver }, uri)
+                editorViewModel.updateFileMetadata(tab.fileId, uri.toString(), tab.title, DocumentType.SHEET)
+                editorViewModel.markDirty(tab.fileId, false)
+            }.onFailure { error ->
+                NexoraLogger.e("EditorScreen", "Save As XLSX failed", error)
+                editorError = error.message ?: "Save As failed"
+            }
+        }
+    }
 
     // FIX #5: Wrap in remember so the controller reference is stable across recompositions.
     // Lambda fields in data classes are never structurally equal, so the old inline
     // construction rebuilt the controller (and fully recomposed SpreadsheetEditor) every frame.
-    val spreadsheetController = remember(spreadsheetViewModel, engine) {
+    val spreadsheetController = remember(spreadsheetViewModel) {
         SpreadsheetInteractionController(
             onCellSelected = { ref -> spreadsheetViewModel.selectCell(ref) },
             onCellTap = { ref -> spreadsheetViewModel.beginEdit(ref) },
@@ -175,9 +246,14 @@ fun EditorScreen(
         )
     }
 
-    LaunchedEffect(engine, openedFile?.id) {
-        initialTabs.forEach { engine.openTab(it) }
-        openedFile?.let { engine.openTab(it.toEditorTab()) }
+    LaunchedEffect(openedFile?.id) {
+        openedFile?.let { file ->
+            if (file.path.startsWith("content://")) {
+                editorViewModel.openFromFile(file)
+            } else {
+                editorViewModel.openUntitled(file.type, file.name)
+            }
+        }
     }
 
     LaunchedEffect(activeTab?.fileId) {
@@ -188,14 +264,15 @@ fun EditorScreen(
     // isRecalculating transitions false->true on commit start, and true->false on completion.
     LaunchedEffect(spreadsheetState.isRecalculating) {
         if (!spreadsheetState.isRecalculating && spreadsheetState.sheetNames.isNotEmpty()) {
-            activeTab?.fileId?.let { fileId -> engine.markDirty(fileId = fileId, dirty = true) }
+            activeTab?.fileId?.let { fileId -> editorViewModel.markDirty(fileId, true) }
         }
     }
 
-    LaunchedEffect(activeTab?.fileId, activeTab?.sourcePath, activeTab?.type) {
+    LaunchedEffect(activeTab?.fileId, activeTab?.sourcePath, activeTab?.type, activeSession?.autosavePayload) {
         val uri = activeTab?.sourcePath
             ?.takeIf { it.startsWith("content://") }
             ?.let(Uri::parse)
+        val autosavePayload = activeSession?.autosavePayload
         when (activeTab?.type) {
             DocumentType.DOC -> {
                 if (uri != null) {
@@ -208,7 +285,16 @@ fun EditorScreen(
                             editText = document.toPlainText()
                         )
                     }.getOrElse { error ->
-                        DocxUiState(isLoading = false, error = error.message ?: "Failed to load document")
+                        if (!autosavePayload.isNullOrBlank()) {
+                            DocxUiState(
+                                isLoading = false,
+                                document = autosavePayload.toDocxDocument(),
+                                editText = autosavePayload,
+                                isEditing = true
+                            )
+                        } else {
+                            DocxUiState(isLoading = false, error = error.message ?: "Failed to load document")
+                        }
                     }
                 } else {
                     val title = activeTab?.title ?: "Untitled Document"
@@ -217,9 +303,12 @@ fun EditorScreen(
                             ParagraphBlock(runs = listOf(TextRun(title)))
                         )
                     )
-                    docxState = DocxUiState(document = document, editText = document.toPlainText())
+                    docxState = if (!autosavePayload.isNullOrBlank()) {
+                        DocxUiState(document = autosavePayload.toDocxDocument(), editText = autosavePayload, isEditing = true)
+                    } else {
+                        DocxUiState(document = document, editText = document.toPlainText())
+                    }
                 }
-                xlsxState = XlsxUiState()
                 pptxState = PptxUiState()
                 textState = TextUiState()
             }
@@ -242,7 +331,6 @@ fun EditorScreen(
                     pptxState = PptxUiState(document = PptxDocument())
                 }
                 docxState = DocxUiState()
-                xlsxState = XlsxUiState()
                 textState = TextUiState()
             }
             DocumentType.TEXT -> {
@@ -252,10 +340,14 @@ fun EditorScreen(
                         val content = textRepository.loadText(contentResolver, uri)
                         TextUiState(content = content)
                     }.getOrElse { error ->
-                        TextUiState(error = error.message ?: "Failed to load text")
+                        if (!autosavePayload.isNullOrBlank()) {
+                            TextUiState(content = autosavePayload)
+                        } else {
+                            TextUiState(error = error.message ?: "Failed to load text")
+                        }
                     }
                 } else {
-                    textState = TextUiState(content = "")
+                    textState = TextUiState(content = autosavePayload ?: "")
                 }
                 docxState = DocxUiState()
                 pptxState = PptxUiState()
@@ -279,6 +371,18 @@ fun EditorScreen(
                 activeMode = activeMode,
                 activeTab = activeTab,
                 onDone = onDone,
+                onSaveAs = {
+                    val tab = activeTab ?: return@EditorHeader
+                    when (tab.type) {
+                        DocumentType.DOC -> docxSaveAsLauncher.launch(tab.title)
+                        DocumentType.PDF -> pdfSaveAsLauncher.launch(tab.title)
+                        DocumentType.TEXT -> textSaveAsLauncher.launch(tab.title)
+                        DocumentType.SHEET -> xlsxSaveAsLauncher.launch(tab.title)
+                        else -> {
+                            editorError = "Save As is not available for this document type yet."
+                        }
+                    }
+                },
                 onSave = {
                     val tab = activeTab ?: return@EditorHeader
                     val uri = tab.sourcePath
@@ -292,14 +396,14 @@ fun EditorScreen(
                             if (uri != null && updatedDocument != null) {
                                 scope.launch {
                                     docxRepository.saveDocx(contentResolver, uri, updatedDocument)
-                                    engine.markDirty(fileId = tab.fileId, dirty = false)
+                                    editorViewModel.markDirty(tab.fileId, false)
                                 }
                                 return@EditorHeader
                             }
                         }
                         DocumentType.SHEET -> {
                             spreadsheetViewModel.save({ contentResolver }, uri)
-                            engine.markDirty(fileId = tab.fileId, dirty = false)
+                            editorViewModel.markDirty(tab.fileId, false)
                             return@EditorHeader
                         }
                         DocumentType.SLIDE -> {
@@ -307,7 +411,7 @@ fun EditorScreen(
                             if (uri != null && document != null) {
                                 scope.launch {
                                     pptxRepository.savePptx(contentResolver, uri, document)
-                                    engine.markDirty(fileId = tab.fileId, dirty = false)
+                                    editorViewModel.markDirty(tab.fileId, false)
                                 }
                                 return@EditorHeader
                             }
@@ -316,21 +420,32 @@ fun EditorScreen(
                             if (uri != null) {
                                 scope.launch {
                                     textRepository.saveText(contentResolver, uri, textState.content)
-                                    engine.markDirty(fileId = tab.fileId, dirty = false)
+                                    editorViewModel.markDirty(tab.fileId, false)
                                 }
                                 return@EditorHeader
                             }
                         }
                         else -> Unit
                     }
-                    engine.markDirty(fileId = tab.fileId, dirty = false)
+                    editorViewModel.markDirty(tab.fileId, false)
                 }
             )
+            if (editorError != null) {
+                NexoraCard(color = NexoraError.copy(alpha = 0.12f), contentPadding = 12.dp) {
+                    Text(
+                        text = editorError ?: "",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = NexoraError
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    NexoraToolbarButton(label = "Dismiss", onClick = { editorError = null })
+                }
+            }
             OpenTabStrip(
                 tabs = state.tabs,
                 activeTabId = state.activeTabId,
                 onSelectTab = { tab ->
-                    engine.activateTab(tab.fileId)
+                    editorViewModel.activateTab(tab)
                     activeMode = tab.type.toEditorMode()
                 }
             )
@@ -349,7 +464,8 @@ fun EditorScreen(
                         onEditTextChange = {
                             docxState = docxState.copy(editText = it)
                             activeTab?.fileId?.let { fileId ->
-                                engine.markDirty(fileId = fileId, dirty = true)
+                                editorViewModel.markDirty(fileId, true)
+                                editorViewModel.scheduleAutosave(fileId, it)
                             }
                         }
                     )
@@ -367,7 +483,7 @@ fun EditorScreen(
                         onTextUpdated = { slideIndex, elementId, newText ->
                             pptxState = pptxState.updateText(slideIndex, elementId, newText)
                             activeTab?.fileId?.let { fileId ->
-                                engine.markDirty(fileId = fileId, dirty = true)
+                                editorViewModel.markDirty(fileId, true)
                             }
                         }
                     )
@@ -378,14 +494,15 @@ fun EditorScreen(
                         onContentChanged = { updated ->
                             textState = textState.copy(content = updated)
                             activeTab?.fileId?.let { fileId ->
-                                engine.markDirty(fileId = fileId, dirty = true)
+                                editorViewModel.markDirty(fileId, true)
+                                editorViewModel.scheduleAutosave(fileId, updated)
                             }
                         }
                     )
                     EditorMode.Workspace -> WorkspacePanel(
                         tabs = state.tabs,
                         onSelectTab = { tab ->
-                            engine.activateTab(tab.fileId)
+                            editorViewModel.activateTab(tab)
                             activeMode = tab.type.toEditorMode()
                         }
                     )
@@ -406,6 +523,7 @@ private fun EditorHeader(
     activeMode: EditorMode,
     activeTab: EditorTab?,
     onDone: () -> Unit,
+    onSaveAs: () -> Unit,
     onSave: () -> Unit
 ) {
     val title = activeTab?.title ?: activeMode.fileName
@@ -436,6 +554,8 @@ private fun EditorHeader(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+        NexoraToolbarButton(label = "Save As", onClick = onSaveAs)
+        Spacer(Modifier.width(8.dp))
         NexoraToolbarButton(label = "Save", onClick = onSave)
         Spacer(Modifier.width(8.dp))
         NexoraToolbarButton(label = "...")
@@ -764,7 +884,7 @@ private fun SpreadsheetEditor(
                         val viewportWidthPx = with(density) { maxWidth.toPx() - rowHeaderWidthPx }
                         // FIX #3: Key only on selectedCell so scroll doesn't fire on every
                         // recalculation that bumps maxRow/maxColumn.
-                        // FIX #8: stickyHeader doesn't occupy an item slot — use ref.row directly.
+                        // Keep header in the list so item indexes remain stable.
                         LaunchedEffect(selectedCell) {
                             val ref = selectedCell ?: return@LaunchedEffect
                             listState.animateScrollToItem(ref.row.coerceAtLeast(0))
@@ -786,28 +906,29 @@ private fun SpreadsheetEditor(
                                 .focusRequester(focusRequester)
                                 .focusable()
                                 .onPreviewKeyEvent { event ->
-                                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                    val nativeEvent = event.nativeKeyEvent
+                                    if (nativeEvent.action != KeyEvent.ACTION_DOWN) return@onPreviewKeyEvent false
                                     val ref = state.selectionState.ref
-                                    val shift = event.isShiftPressed
+                                    val shift = nativeEvent.isShiftPressed
                                     val editing = state.editorState.isEditing
-                                    when (event.key) {
-                                        Key.DirectionUp -> {
+                                    when (nativeEvent.keyCode) {
+                                        KeyEvent.KEYCODE_DPAD_UP -> {
                                             if (editing) controller.onCommitEditAndMove(-1, 0) else controller.onMoveSelection(-1, 0)
                                             true
                                         }
-                                        Key.DirectionDown -> {
+                                        KeyEvent.KEYCODE_DPAD_DOWN -> {
                                             if (editing) controller.onCommitEditAndMove(1, 0) else controller.onMoveSelection(1, 0)
                                             true
                                         }
-                                        Key.DirectionLeft -> {
+                                        KeyEvent.KEYCODE_DPAD_LEFT -> {
                                             if (editing) controller.onCommitEditAndMove(0, -1) else controller.onMoveSelection(0, -1)
                                             true
                                         }
-                                        Key.DirectionRight -> {
+                                        KeyEvent.KEYCODE_DPAD_RIGHT -> {
                                             if (editing) controller.onCommitEditAndMove(0, 1) else controller.onMoveSelection(0, 1)
                                             true
                                         }
-                                        Key.Tab -> {
+                                        KeyEvent.KEYCODE_TAB -> {
                                             if (editing) {
                                                 controller.onCommitEditAndMove(0, if (shift) -1 else 1)
                                             } else {
@@ -815,7 +936,7 @@ private fun SpreadsheetEditor(
                                             }
                                             true
                                         }
-                                        Key.Enter -> {
+                                        KeyEvent.KEYCODE_ENTER -> {
                                             if (editing) {
                                                 controller.onCommitEditAndMove(if (shift) -1 else 1, 0)
                                             } else if (ref != null) {
@@ -823,7 +944,7 @@ private fun SpreadsheetEditor(
                                             }
                                             true
                                         }
-                                        Key.Escape -> {
+                                        KeyEvent.KEYCODE_ESCAPE -> {
                                             if (editing) {
                                                 controller.onCancelEdit()
                                                 true
@@ -835,18 +956,12 @@ private fun SpreadsheetEditor(
                                             // FIX #12: Guard against modifier keys that can produce
                                             // non-zero unicodeChar values (e.g., AltGr combos).
                                             if (!editing && ref != null) {
-                                                val isModifier = event.key == Key.ShiftLeft ||
-                                                    event.key == Key.ShiftRight ||
-                                                    event.key == Key.CtrlLeft ||
-                                                    event.key == Key.CtrlRight ||
-                                                    event.key == Key.AltLeft ||
-                                                    event.key == Key.AltRight ||
-                                                    event.key == Key.MetaLeft ||
-                                                    event.key == Key.MetaRight ||
-                                                    event.key == Key.CapsLock ||
-                                                    event.key == Key.Function
+                                                val isModifier = nativeEvent.isShiftPressed ||
+                                                    nativeEvent.isCtrlPressed ||
+                                                    nativeEvent.isAltPressed ||
+                                                    nativeEvent.isMetaPressed
                                                 if (!isModifier) {
-                                                    val unicode = event.nativeKeyEvent.unicodeChar
+                                                    val unicode = nativeEvent.unicodeChar
                                                     if (unicode > 0 && !Character.isISOControl(unicode)) {
                                                         controller.onBeginEditWithText(unicode.toChar().toString())
                                                         return@onPreviewKeyEvent true
@@ -860,7 +975,7 @@ private fun SpreadsheetEditor(
                             state = listState,
                             contentPadding = PaddingValues(bottom = 24.dp)
                         ) {
-                            stickyHeader {
+                            items(1) {
                                 Row {
                                     Box(
                                         modifier = Modifier
@@ -983,7 +1098,6 @@ private fun SpreadsheetEditor(
         }
     }
 }
-}
 
 // FIX #5: Regular class, not data class. Lambda fields are never structurally equal
 // across recompositions, so a data class here makes @Stable ineffective and causes
@@ -1042,6 +1156,8 @@ private fun CellEditorOverlay(
             onDone = { onCommit() }
         )
     )
+
+}
 
 @Composable
 private fun PresentationEditor(
@@ -1196,32 +1312,19 @@ private fun TextEditor(
                 state.isLoading -> Text("Loading text file...", color = Color(0xFF6B7280))
                 state.error != null -> Text(state.error, color = NexoraError)
                 else -> {
-                    AndroidView(
-                        factory = { context ->
-                            CodeEditor(context).apply {
-                                setText(state.content)
-                                isEditable = true
-                                setLineNumberEnabled(true)
-                                addTextChangedListener(object : TextChangeListener {
-                                    override fun beforeTextChanged(text: Content, start: Int, count: Int, after: Int) = Unit
-
-                                    override fun onTextChanged(text: Content, start: Int, before: Int, count: Int) = Unit
-
-                                    override fun afterTextChanged(text: Content) {
-                                        onContentChanged(text.toString())
-                                    }
-                                })
-                            }
-                        },
-                        update = { editor ->
-                            val current = editor.text.toString()
-                            if (current != state.content) {
-                                editor.setText(state.content)
-                            }
-                        },
+                    OutlinedTextField(
+                        value = state.content,
+                        onValueChange = onContentChanged,
                         modifier = Modifier
                             .fillMaxSize()
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(RoundedCornerShape(12.dp)),
+                        textStyle = MaterialTheme.typography.bodyLarge,
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.White,
+                            unfocusedContainerColor = Color.White,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent
+                        )
                     )
                 }
             }
@@ -1232,12 +1335,22 @@ private fun TextEditor(
 @Composable
 private fun PdfViewer(uri: Uri) {
     val context = LocalContext.current
-    val session = remember(uri) { PdfRenderSession(context.contentResolver, uri) }
+    val session = remember(uri) { HybridPdfRenderSession(context, context.contentResolver, uri) }
     var pageCount by remember { mutableStateOf(0) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var isLoading by remember { mutableStateOf(true) }
 
     LaunchedEffect(uri) {
-        session.open()
-        pageCount = session.pageCount()
+        isLoading = true
+        errorMessage = null
+        runCatching {
+            session.open()
+            pageCount = session.pageCount()
+        }.onFailure { error ->
+            errorMessage = error.message ?: "Failed to open PDF"
+            pageCount = 0
+        }
+        isLoading = false
     }
 
     DisposableEffect(uri) {
@@ -1245,10 +1358,26 @@ private fun PdfViewer(uri: Uri) {
     }
 
     NexoraCard(contentPadding = 0.dp, modifier = Modifier.fillMaxSize()) {
-        if (pageCount == 0) {
+        if (isLoading) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
                     text = "Loading PDF pages...",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF6B7280)
+                )
+            }
+        } else if (errorMessage != null) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    text = errorMessage ?: "Failed to load PDF",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = NexoraError
+                )
+            }
+        } else if (pageCount == 0) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    text = "PDF contains no pages.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color(0xFF6B7280)
                 )
@@ -1267,7 +1396,7 @@ private fun PdfViewer(uri: Uri) {
 }
 
 @Composable
-private fun PdfPage(session: PdfRenderSession, index: Int, pageNumber: Int) {
+private fun PdfPage(session: PdfPageRenderer, index: Int, pageNumber: Int) {
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
@@ -1427,11 +1556,11 @@ private enum class EditorMode(
     val label: String,
     val fileName: String
 ) {
-    Document("Document", "Project Proposal.docx"),
-    Spreadsheet("Sheet", "Sales Report.xlsx"),
-    Presentation("Slides", "Business Plan.pptx"),
-    Pdf("PDF", "User Guide.pdf"),
-    Text("Text", "Notes.txt"),
+    Document("Document", "Untitled Document"),
+    Spreadsheet("Sheet", "Untitled Spreadsheet"),
+    Presentation("Slides", "Untitled Presentation"),
+    Pdf("PDF", "Untitled PDF"),
+    Text("Text", "Untitled Text"),
     Workspace("Workspace", "Workspace")
 }
 
@@ -1442,6 +1571,18 @@ private fun WorkspaceFile.toEditorTab(): EditorTab = EditorTab(
     type = type,
     sourcePath = path
 )
+
+private fun copyDocument(
+    contentResolver: android.content.ContentResolver,
+    sourceUri: Uri,
+    targetUri: Uri
+) {
+    contentResolver.openInputStream(sourceUri)?.use { input ->
+        contentResolver.openOutputStream(targetUri, "wt")?.use { output ->
+            input.copyTo(output)
+        }
+    }
+}
 
 private fun DocumentType?.toEditorMode(): EditorMode = when (this) {
     DocumentType.SHEET -> EditorMode.Spreadsheet

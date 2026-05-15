@@ -1,9 +1,8 @@
 package com.nexora.feature.filemanager
 
-import android.content.Context
-import android.content.Intent
-import android.net.Uri
-import android.provider.OpenableColumns
+import android.app.Activity
+import android.os.Build
+import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -23,12 +22,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,31 +54,49 @@ import com.nexora.core.designsystem.theme.NexoraPrimaryVariant
 import com.nexora.core.designsystem.theme.NexoraSecondary
 import com.nexora.core.model.DocumentType
 import com.nexora.core.model.WorkspaceFile
-import java.time.Instant
+import androidx.hilt.navigation.compose.hiltViewModel
 
 @Composable
 fun FileManagerScreen(
     onOpenFile: (WorkspaceFile) -> Unit
 ) {
     val context = LocalContext.current
+    val viewModel: FileManagerViewModel = hiltViewModel()
+    val state by viewModel.state.collectAsState()
     var selectedType by remember { mutableStateOf("All") }
     var gridMode by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var newestFirst by remember { mutableStateOf(true) }
-    var localFiles by remember { mutableStateOf<List<WorkspaceFile>>(emptyList()) }
-    val sampleFiles = remember { demoWorkspaceFiles() }
+    var permissionRefreshKey by remember { mutableStateOf(0) }
+    val activity = context as? Activity
     val openLocalFileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
-        if (uri != null) {
-            context.persistReadPermission(uri)
-            val file = uri.toWorkspaceFile(context)
-            localFiles = listOf(file) + localFiles.filterNot { it.path == file.path }
-            onOpenFile(file)
+        uri?.let { picked ->
+            viewModel.openDocument(picked, onOpenFile)
         }
     }
+    val openMultipleLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            viewModel.openDocuments(uris) { opened ->
+                opened.firstOrNull()?.let(onOpenFile)
+            }
+        }
+    }
+    val openFolderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        uri?.let { viewModel.persistFolderAccess(it) }
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        permissionRefreshKey += 1
+    }
 
-    val files = localFiles + sampleFiles
+    val files = state.recentFiles
     val filteredFiles = files
         .filter { file -> selectedType == "All" || file.type.label == selectedType }
         .filter { file ->
@@ -124,8 +143,82 @@ fun FileManagerScreen(
                 }
             }
 
+            if (state.error != null) {
+                item {
+                    NexoraCard(color = NexoraError.copy(alpha = 0.15f), contentPadding = 14.dp) {
+                        Text(
+                            text = state.error ?: "",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = NexoraError
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        NexoraToolbarButton(label = "Dismiss", onClick = { viewModel.clearError() })
+                    }
+                }
+            }
+
             item {
-                OpenLocalFileCard(onOpenLocalFile = { openLocalFileLauncher.launch(openableMimeTypes) })
+                OpenLocalFileCard(
+                    onOpenLocalFile = { openLocalFileLauncher.launch(viewModel.allowedMimeTypes()) },
+                    onOpenMultiple = { openMultipleLauncher.launch(viewModel.allowedMimeTypes()) },
+                    onOpenFolder = { openFolderLauncher.launch(null) }
+                )
+            }
+
+            item {
+                StorageBrowserCard(
+                    persistedFolders = state.persistedFolders,
+                    onBrowseStorage = { openFolderLauncher.launch(null) },
+                    onBrowseDownloads = { openFolderLauncher.launch(initialDownloadsUri()) },
+                    onBrowsePrimary = { openFolderLauncher.launch(initialPrimaryUri()) },
+                    onOpenPersistedFolder = { uri -> viewModel.loadFolder(context, uri) }
+                )
+            }
+
+            state.currentFolderUri?.let { currentFolderUri ->
+                item {
+                    NexoraSectionHeader(
+                        title = "Folder contents",
+                        action = if (state.isBrowsing) "Loading" else "Refresh",
+                        onAction = { viewModel.loadFolder(context, currentFolderUri) }
+                    )
+                }
+                if (state.entries.isEmpty() && !state.isBrowsing) {
+                    item {
+                        NexoraCard(contentPadding = 14.dp) {
+                            Text(
+                                text = "No items found",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "This folder is empty or not accessible.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                } else {
+                    itemsIndexed(state.entries) { _, entry ->
+                        FileBrowserRow(
+                            entry = entry,
+                            onClick = { viewModel.openEntry(context, entry, onOpenFile) }
+                        )
+                    }
+                }
+            }
+
+            item {
+                val permissionState = remember(permissionRefreshKey, activity) {
+                    activity?.let { viewModel.mediaPermissionState(it) }
+                }
+                if (permissionState != null && !permissionState.isGranted) {
+                    PermissionCard(
+                        state = permissionState,
+                        onRequest = { permissionLauncher.launch(permissionState.requiredPermissions.toTypedArray()) },
+                        onOpenSettings = { viewModel.openAppSettings(context) }
+                    )
+                }
             }
 
             item {
@@ -146,8 +239,8 @@ fun FileManagerScreen(
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     StorageTile(
-                        title = "Local",
-                        detail = "${localFiles.size} opened",
+                        title = "Recents",
+                        detail = "${state.recentFiles.size} opened",
                         color = NexoraPrimaryVariant,
                         modifier = Modifier.weight(1f)
                     )
@@ -212,7 +305,9 @@ fun FileManagerScreen(
 
 @Composable
 private fun OpenLocalFileCard(
-    onOpenLocalFile: () -> Unit
+    onOpenLocalFile: () -> Unit,
+    onOpenMultiple: () -> Unit,
+    onOpenFolder: () -> Unit
 ) {
     NexoraCard(
         color = NexoraPrimary.copy(alpha = 0.15f),
@@ -238,6 +333,42 @@ private fun OpenLocalFileCard(
             }
             NexoraToolbarButton(label = "Browse", selected = true, onClick = onOpenLocalFile)
         }
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            NexoraToolbarButton(label = "Multi", selected = true, onClick = onOpenMultiple)
+            NexoraToolbarButton(label = "Folder", selected = false, onClick = onOpenFolder)
+        }
+    }
+}
+
+@Composable
+private fun PermissionCard(
+    state: com.nexora.core.common.permissions.PermissionState,
+    onRequest: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    NexoraCard(color = NexoraPrimary.copy(alpha = 0.12f), contentPadding = 14.dp) {
+        Text(
+            text = "Media access",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = if (state.shouldShowRationale) {
+                "Allow access to import images, video, or audio into documents."
+            } else {
+                "Grant media access for richer documents."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(10.dp))
+        if (state.isPermanentlyDenied) {
+            NexoraToolbarButton(label = "Open Settings", selected = true, onClick = onOpenSettings)
+        } else {
+            NexoraToolbarButton(label = "Grant Access", selected = true, onClick = onRequest)
+        }
     }
 }
 
@@ -261,6 +392,114 @@ private fun StorageTile(
         }
         Spacer(Modifier.height(6.dp))
         Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun StorageBrowserCard(
+    persistedFolders: List<com.nexora.core.model.PersistedUriPermission>,
+    onBrowseStorage: () -> Unit,
+    onBrowseDownloads: () -> Unit,
+    onBrowsePrimary: () -> Unit,
+    onOpenPersistedFolder: (android.net.Uri) -> Unit
+) {
+    NexoraCard(color = NexoraSecondary.copy(alpha = 0.12f), contentPadding = 14.dp) {
+        Text(
+            text = "Storage locations",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            NexoraToolbarButton(label = "Browse", selected = true, onClick = onBrowseStorage)
+            NexoraToolbarButton(label = "Downloads", selected = false, onClick = onBrowseDownloads)
+            NexoraToolbarButton(label = "Internal", selected = false, onClick = onBrowsePrimary)
+        }
+        if (persistedFolders.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = "Pinned folders",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(6.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                persistedFolders.forEach { permission ->
+                    NexoraCard(contentPadding = 10.dp, onClick = {
+                        onOpenPersistedFolder(android.net.Uri.parse(permission.uri))
+                    }) {
+                        Text(
+                            text = permission.uri.substringAfterLast("/"),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Tree access granted",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FileBrowserRow(
+    entry: BrowserEntry,
+    onClick: () -> Unit
+) {
+    NexoraCard(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick,
+        contentPadding = 12.dp
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            val badge = if (entry.isDirectory) "DIR" else "FILE"
+            NexoraIconBadge(label = badge, color = NexoraPrimary, size = 38.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = entry.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                val detail = entry.mimeType ?: if (entry.isDirectory) "Folder" else "Document"
+                Text(
+                    text = detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Text(
+                text = if (entry.isDirectory) "Open" else "Open",
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.labelLarge
+            )
+        }
+    }
+}
+
+private fun initialDownloadsUri(): android.net.Uri? {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        runCatching {
+            DocumentsContract.buildRootUri("com.android.providers.downloads.documents", "downloads")
+        }.getOrNull()
+    } else {
+        null
+    }
+}
+
+private fun initialPrimaryUri(): android.net.Uri? {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        runCatching {
+            DocumentsContract.buildRootUri("com.android.externalstorage.documents", "primary")
+        }.getOrNull()
+    } else {
+        null
     }
 }
 
@@ -345,92 +584,6 @@ private fun FileGridCard(
     }
 }
 
-private fun demoWorkspaceFiles(): List<WorkspaceFile> = listOf(
-    WorkspaceFile(
-        name = "Marketing Plan.docx",
-        path = "/cloud/Docs",
-        type = DocumentType.DOC,
-        sizeLabel = "12.4 MB"
-    ),
-    WorkspaceFile(
-        name = "Sales Analysis.xlsx",
-        path = "/cloud/Sheets",
-        type = DocumentType.SHEET,
-        sizeLabel = "850 KB",
-        isPinned = true
-    ),
-    WorkspaceFile(
-        name = "Product Roadmap.pptx",
-        path = "/local/Slides",
-        type = DocumentType.SLIDE,
-        sizeLabel = "3.2 MB"
-    ),
-    WorkspaceFile(
-        name = "User Guide.pdf",
-        path = "/downloads/PDF",
-        type = DocumentType.PDF,
-        sizeLabel = "1.5 MB"
-    ),
-    WorkspaceFile(
-        name = "Meeting Notes.docx",
-        path = "/cloud/Docs",
-        type = DocumentType.DOC,
-        sizeLabel = "2.1 MB"
-    ),
-    WorkspaceFile(
-        name = "Company Profile.pptx",
-        path = "/local/Slides",
-        type = DocumentType.SLIDE,
-        sizeLabel = "4.7 MB"
-    )
-)
-
-private fun Uri.toWorkspaceFile(context: Context): WorkspaceFile {
-    val name = context.queryDisplayName(this) ?: lastPathSegment?.substringAfterLast("/") ?: "Local file"
-    val type = documentTypeFromNameOrMime(name, context.contentResolver.getType(this))
-    val size = context.querySize(this)?.toReadableSize() ?: "Local file"
-    return WorkspaceFile(
-        name = name,
-        path = toString(),
-        type = type,
-        lastModified = Instant.now().toString(),
-        sizeLabel = size,
-        isPinned = true
-    )
-}
-
-private fun Context.persistReadPermission(uri: Uri) {
-    runCatching {
-        contentResolver.takePersistableUriPermission(
-            uri,
-            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-        )
-    }
-}
-
-private fun Context.queryDisplayName(uri: Uri): String? = contentResolver
-    .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
-    ?.use { cursor ->
-        val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-        if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
-    }
-
-private fun Context.querySize(uri: Uri): Long? = contentResolver
-    .query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)
-    ?.use { cursor ->
-        val index = cursor.getColumnIndex(OpenableColumns.SIZE)
-        if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) cursor.getLong(index) else null
-    }
-
-private fun Long.toReadableSize(): String {
-    val kb = this / 1024f
-    val mb = kb / 1024f
-    return if (mb >= 1f) {
-        "${"%.1f".format(mb)} MB"
-    } else {
-        "${kb.toInt().coerceAtLeast(1)} KB"
-    }
-}
 
 private val WorkspaceFile.locationLabel: String
     get() = when {
@@ -441,26 +594,6 @@ private val WorkspaceFile.locationLabel: String
         else -> path
     }
 
-private fun documentTypeFromNameOrMime(name: String, mimeType: String?): DocumentType = when {
-    mimeType?.contains("pdf", ignoreCase = true) == true || name.endsWith(".pdf", ignoreCase = true) -> DocumentType.PDF
-    mimeType?.contains("spreadsheet", ignoreCase = true) == true ||
-        mimeType?.contains("excel", ignoreCase = true) == true ||
-        name.endsWith(".xls", ignoreCase = true) ||
-        name.endsWith(".xlsx", ignoreCase = true) -> DocumentType.SHEET
-    mimeType?.contains("presentation", ignoreCase = true) == true ||
-        mimeType?.contains("powerpoint", ignoreCase = true) == true ||
-        name.endsWith(".ppt", ignoreCase = true) ||
-        name.endsWith(".pptx", ignoreCase = true) -> DocumentType.SLIDE
-    mimeType?.startsWith("text/", ignoreCase = true) == true ||
-        mimeType?.contains("json", ignoreCase = true) == true ||
-        mimeType?.contains("xml", ignoreCase = true) == true ||
-        name.endsWith(".txt", ignoreCase = true) ||
-        name.endsWith(".csv", ignoreCase = true) ||
-        name.endsWith(".json", ignoreCase = true) ||
-        name.endsWith(".xml", ignoreCase = true) ||
-        name.endsWith(".md", ignoreCase = true) -> DocumentType.TEXT
-    else -> DocumentType.DOC
-}
 
 private val DocumentType.label: String
     get() = when (this) {
@@ -489,19 +622,3 @@ private val DocumentType.color: Color
         DocumentType.PDF -> NexoraError
         DocumentType.TEXT -> NexoraPrimaryVariant
     }
-
-private val openableMimeTypes = arrayOf(
-    "application/pdf",
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/vnd.ms-excel",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "application/vnd.ms-powerpoint",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    "text/plain",
-    "text/csv",
-    "text/markdown",
-    "application/json",
-    "text/xml",
-    "application/xml"
-)
