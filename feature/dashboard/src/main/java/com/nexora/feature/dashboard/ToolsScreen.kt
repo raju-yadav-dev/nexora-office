@@ -27,6 +27,7 @@ import com.nexora.core.designsystem.component.NexoraActionGrid
 import com.nexora.core.designsystem.component.NexoraCard
 import com.nexora.core.designsystem.component.NexoraGradientBackground
 import com.nexora.core.designsystem.component.NexoraIconBadge
+import com.nexora.core.designsystem.component.NexoraPill
 import com.nexora.core.designsystem.component.NexoraSearchField
 import com.nexora.core.designsystem.component.NexoraSectionHeader
 import com.nexora.core.designsystem.theme.NexoraError
@@ -41,6 +42,7 @@ fun ToolsScreen(
     onOpenEditor: (WorkspaceFile) -> Unit
 ) {
     var searchQuery by remember { mutableStateOf("") }
+    var expandedSection by remember { mutableStateOf("PDF Tools") }
     val pdfTools = listOf(
         ActionItem("Merge PDF", "M", NexoraError),
         ActionItem("Split PDF", "S", NexoraError),
@@ -49,15 +51,24 @@ fun ToolsScreen(
     )
     val imageTools = listOf(
         ActionItem("Image to PDF", "IP", Color(0xFF2563EB)),
+        ActionItem("Resize Image", "RS", Color(0xFF0EA5E9)),
+        ActionItem("Image Compress", "IC", NexoraPrimaryVariant)
+    )
+    val aiTools = listOf(
+        ActionItem("Summarize", "AI", NexoraPrimary),
+        ActionItem("Rewrite", "RW", NexoraPrimaryVariant),
+        ActionItem("OCR Cleanup", "OCR", NexoraSecondary)
+    )
+    val conversionTools = listOf(
         ActionItem("PDF to Excel", "X", NexoraSecondary),
         ActionItem("PDF to PPT", "P", Color(0xFFF97316)),
-        ActionItem("Scan OCR", "OCR", NexoraPrimary)
-    )
-    val fileTools = listOf(
         ActionItem("Converter", "CV", NexoraSecondary),
-        ActionItem("Compress", "Z", NexoraPrimaryVariant),
-        ActionItem("Extract Text", "TXT", Color(0xFF0EA5E9)),
-        ActionItem("More", "+", MaterialTheme.colorScheme.onSurfaceVariant)
+        ActionItem("Extract Text", "TXT", Color(0xFF0EA5E9))
+    )
+    val scanTools = listOf(
+        ActionItem("Scan OCR", "OCR", NexoraPrimary),
+        ActionItem("Scan to PDF", "PDF", NexoraError),
+        ActionItem("Clean Scan", "CS", NexoraSecondary)
     )
     val matchesSearch: (ActionItem) -> Boolean = { item ->
         searchQuery.isBlank() || item.title.contains(searchQuery, ignoreCase = true)
@@ -121,13 +132,38 @@ fun ToolsScreen(
             }
 
             item {
-                ToolSection(title = "PDF Tools", tools = pdfTools.filter(matchesSearch), onOpenEditor = onOpenEditor)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("PDF Tools", "Image Tools", "AI Tools").forEach { title ->
+                        NexoraPill(
+                            label = title.removeSuffix(" Tools"),
+                            selected = expandedSection == title,
+                            modifier = Modifier.weight(1f),
+                            onClick = { expandedSection = title }
+                        )
+                    }
+                }
             }
-            item {
-                ToolSection(title = "Image Tools", tools = imageTools.filter(matchesSearch), onOpenEditor = onOpenEditor)
-            }
-            item {
-                ToolSection(title = "File Tools", tools = fileTools.filter(matchesSearch), onOpenEditor = onOpenEditor)
+
+            val sections = listOf(
+                "PDF Tools" to pdfTools,
+                "Image Tools" to imageTools,
+                "AI Tools" to aiTools,
+                "Conversion Tools" to conversionTools,
+                "Scan Tools" to scanTools
+            )
+            sections.forEach { (title, tools) ->
+                item {
+                    ToolSection(
+                        title = title,
+                        expanded = expandedSection == title || searchQuery.isNotBlank(),
+                        tools = tools.filter(matchesSearch),
+                        onToggle = { expandedSection = if (expandedSection == title) "" else title },
+                        onOpenEditor = onOpenEditor
+                    )
+                }
             }
         }
     }
@@ -136,21 +172,25 @@ fun ToolsScreen(
 @Composable
 private fun ToolSection(
     title: String,
+    expanded: Boolean,
     tools: List<ActionItem>,
+    onToggle: () -> Unit,
     onOpenEditor: (WorkspaceFile) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        NexoraSectionHeader(title = title)
-        if (tools.isEmpty()) {
-            NexoraCard(contentPadding = 12.dp) {
-                Text(
-                    text = "No tools found",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+        NexoraSectionHeader(title = title, action = if (expanded) "Hide" else "Show", onAction = onToggle)
+        if (expanded) {
+            if (tools.isEmpty()) {
+                NexoraCard(contentPadding = 12.dp) {
+                    Text(
+                        text = "No tools found",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            } else {
+                NexoraActionGrid(items = tools, onClick = { onOpenEditor(it.toToolFile()) })
             }
-        } else {
-            NexoraActionGrid(items = tools, onClick = { onOpenEditor(it.toToolFile()) })
         }
         Spacer(Modifier.height(2.dp))
     }

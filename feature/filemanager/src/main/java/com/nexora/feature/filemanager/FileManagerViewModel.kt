@@ -11,7 +11,9 @@ import com.nexora.core.common.permissions.PermissionState
 import com.nexora.core.data.session.DocumentSessionRepository
 import com.nexora.core.data.storage.FileOpenManager
 import com.nexora.core.data.storage.RecentFilesRepository
+import com.nexora.core.data.storage.SafPermissionMissingException
 import com.nexora.core.data.storage.StorageAccessRepository
+import com.nexora.core.model.DocumentAccessMode
 import com.nexora.core.model.PersistedUriPermission
 import com.nexora.core.model.WorkspaceFile
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -62,15 +64,16 @@ class FileManagerViewModel @Inject constructor(
     fun openDocument(uri: Uri, onOpened: (WorkspaceFile) -> Unit) {
         viewModelScope.launch {
             val file = runCatching {
-                NexoraLogger.d(logTag, "Opening document: $uri")
-                storageAccessRepository.persistUriPermission(uri)
+                NexoraLogger.i(logTag, "event=saf_selection source=open_document uri=$uri")
+                storageAccessRepository.persistUriPermission(uri, DocumentAccessMode.READ_WRITE).getOrThrow()
                 fileOpenManager.buildWorkspaceFile(uri)
             }.onFailure { error ->
-                NexoraLogger.e(logTag, "Failed to open document: $uri", error)
-                _state.value = _state.value.copy(error = error.message ?: "Failed to open file")
+                NexoraLogger.e(logTag, "event=document_open_failure source=open_document uri=$uri", error)
+                _state.value = _state.value.copy(error = userFacingOpenError(error))
             }.getOrNull()
 
             if (file != null) {
+                NexoraLogger.i(logTag, "event=document_open_success source=open_document uri=${file.path}")
                 recentFilesRepository.addRecent(file)
                 sessionRepository.openSession(file)
                 onOpened(file)
@@ -83,16 +86,17 @@ class FileManagerViewModel @Inject constructor(
             val opened = mutableListOf<WorkspaceFile>()
             uris.forEach { uri ->
                 runCatching {
-                    NexoraLogger.d(logTag, "Opening document from batch: $uri")
-                    storageAccessRepository.persistUriPermission(uri)
+                    NexoraLogger.i(logTag, "event=saf_selection source=open_multiple uri=$uri")
+                    storageAccessRepository.persistUriPermission(uri, DocumentAccessMode.READ_WRITE).getOrThrow()
                     fileOpenManager.buildWorkspaceFile(uri)
                 }.onSuccess { file ->
+                    NexoraLogger.i(logTag, "event=document_open_success source=open_multiple uri=${file.path}")
                     recentFilesRepository.addRecent(file)
                     sessionRepository.openSession(file)
                     opened.add(file)
                 }.onFailure { error ->
-                    NexoraLogger.e(logTag, "Failed to open document: $uri", error)
-                    _state.value = _state.value.copy(error = error.message ?: "Failed to open file")
+                    NexoraLogger.e(logTag, "event=document_open_failure source=open_multiple uri=$uri", error)
+                    _state.value = _state.value.copy(error = userFacingOpenError(error))
                 }
             }
             if (opened.isNotEmpty()) onOpened(opened)
@@ -102,12 +106,12 @@ class FileManagerViewModel @Inject constructor(
     fun persistFolderAccess(uri: Uri) {
         viewModelScope.launch {
             runCatching {
-                NexoraLogger.i(logTag, "Persisting folder access: $uri")
-                storageAccessRepository.persistTreePermission(uri)
+                NexoraLogger.i(logTag, "event=saf_selection source=open_tree uri=$uri")
+                storageAccessRepository.persistTreePermission(uri, DocumentAccessMode.READ_WRITE).getOrThrow()
             }
                 .onFailure { error ->
-                    NexoraLogger.e(logTag, "Failed to persist folder access: $uri", error)
-                    _state.value = _state.value.copy(error = error.message ?: "Failed to persist folder access")
+                    NexoraLogger.e(logTag, "event=saf_persist_tree_failure uri=$uri", error)
+                    _state.value = _state.value.copy(error = userFacingOpenError(error))
                 }
         }
     }
@@ -133,7 +137,7 @@ class FileManagerViewModel @Inject constructor(
             entry.uri?.let { loadFolder(context, it) }
             return
         }
-        entry.uri?.let { openDocument(it, onOpened) }
+        entry.uri?.let { openPersistedSafDocument(it, onOpened) }
     }
 
     fun clearError() {
@@ -154,6 +158,45 @@ class FileManagerViewModel @Inject constructor(
             )
         }.sortedWith(compareBy<BrowserEntry> { !it.isDirectory }.thenBy { it.name.lowercase() })
     }
+
+    private fun openPersistedSafDocument(uri: Uri, onOpened: (WorkspaceFile) -> Unit) {
+        viewModelScope.launch {
+            val file = runCatching {
+                val validation = storageAccessRepository.validatePersistedUriPermission(
+                    uri = uri,
+                    accessMode = DocumentAccessMode.READ
+                )
+                if (!validation.allows(DocumentAccessMode.READ)) {
+                    throw SafPermissionMissingException(uri, DocumentAccessMode.READ)
+                }
+                NexoraLogger.i(
+                    logTag,
+                    "event=document_permission_restore uri=$uri persistedUri=${validation.persistedUri} viaTree=${validation.grantedByTree}"
+                )
+                fileOpenManager.buildWorkspaceFile(uri)
+            }.onFailure { error ->
+                NexoraLogger.e(logTag, "event=document_open_failure source=persisted_tree uri=$uri", error)
+                _state.value = _state.value.copy(error = userFacingOpenError(error))
+            }.getOrNull()
+
+            if (file != null) {
+                NexoraLogger.i(logTag, "event=document_open_success source=persisted_tree uri=${file.path}")
+                recentFilesRepository.addRecent(file)
+                sessionRepository.openSession(file)
+                onOpened(file)
+            }
+        }
+    }
+
+    private fun userFacingOpenError(error: Throwable): String =
+        when (error) {
+            is SafPermissionMissingException ->
+                "Access to this document needs to be restored. Reopen it from the file picker to continue."
+            is SecurityException ->
+                "Android did not grant lasting access to this document. Reopen it from the file picker."
+            else ->
+                "Could not open this document. Try reopening it from the file picker."
+        }
 }
 
 data class FileManagerState(

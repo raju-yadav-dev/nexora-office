@@ -4,11 +4,14 @@ import android.content.ContentResolver
 import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.util.LruCache
 import com.artifex.mupdf.fitz.ColorSpace
 import com.artifex.mupdf.fitz.Document
 import com.artifex.mupdf.fitz.Matrix
 import com.nexora.core.common.logging.NexoraLogger
+import com.nexora.core.data.storage.requirePersistedSafPermission
+import com.nexora.core.model.DocumentAccessMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -26,14 +29,19 @@ class MuPdfRenderSession(
 
     override suspend fun open(): PdfPageRenderer = withContext(Dispatchers.IO) {
         if (document == null) {
-            NexoraLogger.d(logTag, "Opening MuPDF document: $uri")
-            val input = contentResolver.openInputStream(uri) ?: error("Unable to open PDF stream")
-            val data = input.use { it.readBytes() }
+            NexoraLogger.i(logTag, "event=pdf_renderer_open_start engine=mupdf uri=$uri")
+            contentResolver.requirePersistedSafPermission(uri, DocumentAccessMode.READ)
+            val descriptor = contentResolver.openFileDescriptor(uri, "r")
+                ?: error("Unable to open PDF file descriptor")
+            val data = ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { input ->
+                input.readBytes()
+            }
             val file = File.createTempFile("nexora_pdf_", ".pdf", context.cacheDir).apply {
                 writeBytes(data)
             }
             tempFile = file
             document = Document.openDocument(file.absolutePath)
+            NexoraLogger.i(logTag, "event=pdf_renderer_open_success engine=mupdf uri=$uri pages=${document?.countPages() ?: 0}")
         }
         this@MuPdfRenderSession
     }
@@ -85,6 +93,6 @@ class MuPdfRenderSession(
         cache.evictAll()
         tempFile?.delete()
         tempFile = null
-        NexoraLogger.d(logTag, "Closed MuPDF document")
+        NexoraLogger.d(logTag, "event=pdf_renderer_closed engine=mupdf")
     }
 }

@@ -8,6 +8,8 @@ import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.util.LruCache
 import com.nexora.core.common.logging.NexoraLogger
+import com.nexora.core.data.storage.requirePersistedSafPermission
+import com.nexora.core.model.DocumentAccessMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
@@ -23,10 +25,12 @@ class PdfRenderSession(
 
     override suspend fun open(): PdfRenderSession = withContext(Dispatchers.IO) {
         if (renderer == null) {
-            NexoraLogger.d(logTag, "Opening PDF renderer for $uri")
+            NexoraLogger.i(logTag, "event=pdf_renderer_open_start engine=android uri=$uri")
+            contentResolver.requirePersistedSafPermission(uri, DocumentAccessMode.READ)
             fileDescriptor = contentResolver.openFileDescriptor(uri, "r")
             val descriptor = fileDescriptor ?: error("Unable to open PDF file")
             renderer = PdfRenderer(descriptor)
+            NexoraLogger.i(logTag, "event=pdf_renderer_open_success engine=android uri=$uri pages=${renderer?.pageCount ?: 0}")
         }
         this@PdfRenderSession
     }
@@ -57,6 +61,6 @@ class PdfRenderSession(
         renderer = null
         fileDescriptor = null
         cache.evictAll()
-        NexoraLogger.d(logTag, "Closed PDF renderer for $uri")
+        NexoraLogger.d(logTag, "event=pdf_renderer_closed engine=android uri=$uri")
     }
 }

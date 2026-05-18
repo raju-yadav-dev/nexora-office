@@ -2,6 +2,7 @@ package com.nexora.feature.dashboard
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -48,13 +50,18 @@ fun TemplatesScreen(
 ) {
     var selectedCategory by remember { mutableStateOf("All") }
     var searchQuery by remember { mutableStateOf("") }
+    var previewTemplate by remember { mutableStateOf<Template?>(null) }
     val templates = listOf(
         Template("Resume", "Resume", "Doc", DocumentType.DOC, Color(0xFF2563EB), listOf(Color.White, Color(0xFFE8ECF8))),
-        Template("Project Report", "Report", "PDF", DocumentType.PDF, Color(0xFF1D4ED8), listOf(Color(0xFF0F2557), Color(0xFF3B82F6))),
+        Template("Project Report", "Reports", "PDF", DocumentType.PDF, Color(0xFF1D4ED8), listOf(Color(0xFF0F2557), Color(0xFF3B82F6))),
         Template("Business Plan", "Business", "Doc", DocumentType.DOC, Color(0xFF2563EB), listOf(Color.White, Color(0xFFF2F4F7))),
         Template("Agreement", "Business", "PDF", DocumentType.PDF, NexoraError, listOf(Color.White, Color(0xFFFFE4E6))),
+        Template("Class Notes", "Notes", "TXT", DocumentType.TEXT, Color(0xFF14B8A6), listOf(Color.White, Color(0xFFE0F2FE))),
+        Template("Invoice", "Invoice", "Sheet", DocumentType.SHEET, NexoraSecondary, listOf(Color.White, Color(0xFFE0FBEF))),
+        Template("Study Planner", "Education", "Doc", DocumentType.DOC, Color(0xFF7C3AED), listOf(Color.White, Color(0xFFF3E8FF))),
         Template("Sales Tracker", "Business", "Sheet", DocumentType.SHEET, NexoraSecondary, listOf(Color.White, Color(0xFFE0FBEF))),
-        Template("Pitch Deck", "Business", "PPT", DocumentType.SLIDE, Color(0xFFF97316), listOf(Color(0xFF341A12), Color(0xFFB45309)))
+        Template("Pitch Deck", "Presentation", "PPT", DocumentType.SLIDE, Color(0xFFF97316), listOf(Color(0xFF341A12), Color(0xFFB45309))),
+        Template("Budget Sheet", "Spreadsheet", "Sheet", DocumentType.SHEET, NexoraSecondary, listOf(Color.White, Color(0xFFDCFCE7)))
     )
     val visibleTemplates = templates.filter { template ->
         (selectedCategory == "All" || template.category == selectedCategory) &&
@@ -79,8 +86,11 @@ fun TemplatesScreen(
                         value = searchQuery,
                         onValueChange = { searchQuery = it }
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf("All", "Resume", "Report", "Business").forEach { category ->
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf("All", "Resume", "Business", "Reports", "Notes", "Invoice", "Education", "Spreadsheet", "Presentation").forEach { category ->
                             NexoraPill(
                                 label = category,
                                 selected = category == selectedCategory,
@@ -93,8 +103,8 @@ fun TemplatesScreen(
 
             item {
                 NexoraSectionHeader(
-                    title = "Recommended",
-                    action = "See all",
+                    title = "Featured Templates",
+                    action = "Reset",
                     onAction = {
                         selectedCategory = "All"
                         searchQuery = ""
@@ -105,13 +115,14 @@ fun TemplatesScreen(
             item {
                 TemplateGrid(
                     templates = visibleTemplates.take(3),
-                    onOpenTemplate = onOpenTemplate
+                    onOpenTemplate = onOpenTemplate,
+                    onPreviewTemplate = { previewTemplate = it }
                 )
             }
 
             item {
                 NexoraSectionHeader(
-                    title = "Documents",
+                    title = "Trending",
                     action = if (visibleTemplates.size > 3) "Show all" else null,
                     onAction = {
                         selectedCategory = "All"
@@ -122,9 +133,29 @@ fun TemplatesScreen(
             item {
                 TemplateGrid(
                     templates = visibleTemplates.drop(3).ifEmpty { visibleTemplates.take(3) },
-                    onOpenTemplate = onOpenTemplate
+                    onOpenTemplate = onOpenTemplate,
+                    onPreviewTemplate = { previewTemplate = it }
                 )
             }
+
+            item {
+                NexoraSectionHeader(title = "Recent Templates")
+                TemplateGrid(
+                    templates = templates.takeLast(3),
+                    onOpenTemplate = onOpenTemplate,
+                    onPreviewTemplate = { previewTemplate = it }
+                )
+            }
+        }
+        previewTemplate?.let { template ->
+            TemplatePreviewSheet(
+                template = template,
+                onDismiss = { previewTemplate = null },
+                onUseTemplate = {
+                    previewTemplate = null
+                    onOpenTemplate(template.toWorkspaceFile())
+                }
+            )
         }
     }
 }
@@ -132,7 +163,8 @@ fun TemplatesScreen(
 @Composable
 private fun TemplateGrid(
     templates: List<Template>,
-    onOpenTemplate: (WorkspaceFile) -> Unit
+    onOpenTemplate: (WorkspaceFile) -> Unit,
+    onPreviewTemplate: (Template) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (templates.isEmpty()) {
@@ -150,12 +182,70 @@ private fun TemplateGrid(
                     TemplateCard(
                         template = template,
                         modifier = Modifier.weight(1f),
-                        onClick = { onOpenTemplate(template.toWorkspaceFile()) }
+                        onClick = { onPreviewTemplate(template) }
                     )
                 }
                 repeat(3 - row.size) {
                     Spacer(Modifier.weight(1f))
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TemplatePreviewSheet(
+    template: Template,
+    onDismiss: () -> Unit,
+    onUseTemplate: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.36f))
+            .clickable(onClick = onDismiss),
+        contentAlignment = Alignment.BottomCenter
+    ) {
+        NexoraCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            contentPadding = 16.dp
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                NexoraIconBadge(label = template.badge, color = template.accent, size = 44.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(template.title, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+                    Text(template.category, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                NexoraPill(label = "Favorite", selected = false)
+            }
+            Spacer(Modifier.height(12.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(150.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Brush.verticalGradient(template.previewColors))
+                    .padding(16.dp)
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.align(Alignment.CenterStart)) {
+                    repeat(5) { index ->
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(if (index == 0) 0.56f else 0.82f)
+                                .height(if (index == 0) 12.dp else 6.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(template.accent.copy(alpha = if (index == 0) 0.42f else 0.22f))
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NexoraPill(label = "Close", selected = false, modifier = Modifier.weight(1f), onClick = onDismiss)
+                NexoraPill(label = "Use Template", selected = true, modifier = Modifier.weight(1f), onClick = onUseTemplate)
             }
         }
     }

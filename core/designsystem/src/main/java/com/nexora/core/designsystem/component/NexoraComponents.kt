@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -40,6 +41,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nexora.core.designsystem.R
+import com.nexora.core.designsystem.theme.NexoraRadius
 
 @Composable
 fun NexoraGradientBackground(
@@ -63,8 +65,8 @@ fun NexoraGradientBackground(
 fun NexoraCard(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
-    shape: RoundedCornerShape = RoundedCornerShape(16.dp),
-    color: Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+    shape: RoundedCornerShape = RoundedCornerShape(NexoraRadius.card),
+    color: Color = MaterialTheme.colorScheme.surface,
     contentPadding: Dp = 16.dp,
     content: @Composable ColumnScope.() -> Unit
 ) {
@@ -73,10 +75,7 @@ fun NexoraCard(
         modifier = modifier
             .clip(shape)
             .background(color)
-            .border(
-                BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.32f)),
-                shape
-            )
+            .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), shape)
             .then(clickableModifier)
             .padding(contentPadding),
         content = content
@@ -92,12 +91,12 @@ fun NexoraSearchField(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.82f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.24f))
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
+            modifier = Modifier.padding(horizontal = 13.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             SearchGlyph(
@@ -192,7 +191,7 @@ fun NexoraIconBadge(
     Box(
         modifier = modifier
             .size(size)
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(8.dp))
             .background(color),
         contentAlignment = Alignment.Center
     ) {
@@ -216,7 +215,7 @@ fun NexoraPill(
     val container = if (selected) {
         MaterialTheme.colorScheme.primary
     } else {
-        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+        MaterialTheme.colorScheme.surface
     }
     val content = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
 
@@ -224,8 +223,15 @@ fun NexoraPill(
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
             .background(container)
+            .border(
+                BorderStroke(
+                    1.dp,
+                    if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f) else MaterialTheme.colorScheme.outlineVariant
+                ),
+                RoundedCornerShape(8.dp)
+            )
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 7.dp),
+            .padding(horizontal = 12.dp, vertical = 7.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
@@ -278,26 +284,27 @@ fun NexoraToolbarButton(
     onClick: () -> Unit = {}
 ) {
     val background = if (selected) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
+        MaterialTheme.colorScheme.primary
     } else {
-        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
+        MaterialTheme.colorScheme.surface
     }
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
+            .defaultMinSize(minHeight = 36.dp)
+            .clip(RoundedCornerShape(8.dp))
             .background(background)
             .border(
-                BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.24f)),
-                RoundedCornerShape(10.dp)
+                BorderStroke(1.dp, if (selected) Color.Transparent else MaterialTheme.colorScheme.outlineVariant),
+                RoundedCornerShape(8.dp)
             )
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelMedium,
-            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
             maxLines = 1
         )
     }
@@ -319,11 +326,11 @@ fun NexoraActionGrid(
                     Column(
                         modifier = Modifier
                             .weight(1f)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f))
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surface)
                             .border(
-                                BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.22f)),
-                                RoundedCornerShape(14.dp)
+                                BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                RoundedCornerShape(12.dp)
                             )
                             .clickable { onClick(item) }
                             .padding(10.dp),

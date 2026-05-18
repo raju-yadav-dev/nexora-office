@@ -40,7 +40,6 @@ import com.nexora.core.designsystem.component.NexoraCard
 import com.nexora.core.designsystem.component.NexoraGradientBackground
 import com.nexora.core.designsystem.component.NexoraIconBadge
 import com.nexora.core.designsystem.component.NexoraLogoMark
-import com.nexora.core.designsystem.component.NexoraMetricCard
 import com.nexora.core.designsystem.component.NexoraPill
 import com.nexora.core.designsystem.component.NexoraSearchField
 import com.nexora.core.designsystem.component.NexoraSectionHeader
@@ -95,33 +94,25 @@ fun DashboardScreen(
             }
 
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    NexoraMetricCard(
-                        label = "Today",
-                        value = visibleRecentFiles.size.toString(),
-                        accent = NexoraPrimary,
-                        modifier = Modifier.weight(1f)
-                    )
-                    NexoraMetricCard(
-                        label = "Pinned",
-                        value = state.recentFiles.count { it.isPinned }.toString(),
-                        accent = NexoraSecondary,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+                ContinueEditingCard(
+                    file = visibleRecentFiles.firstOrNull(),
+                    onOpenFileManager = onOpenFileManager,
+                    onOpenEditor = onOpenEditor
+                )
             }
 
             item {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    NexoraSectionHeader(title = "Quick Create")
-                    NexoraActionGrid(
-                        items = quickActions.map { it.actionItem },
-                        onClick = { action ->
-                            quickActions
-                                .firstOrNull { it.title == action.title }
-                                ?.let { onOpenEditor(it.toWorkspaceFile()) }
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    NexoraSectionHeader(title = "Create")
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        quickActions.forEach { action ->
+                            QuickCreateButton(
+                                item = action,
+                                modifier = Modifier.weight(1f),
+                                onClick = { onOpenEditor(action.toWorkspaceFile()) }
+                            )
                         }
-                    )
+                    }
                 }
             }
 
@@ -156,47 +147,8 @@ fun DashboardScreen(
             }
 
             item {
-                NexoraCard(
-                    color = NexoraPrimary.copy(alpha = 0.16f),
-                    contentPadding = 14.dp
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        NexoraIconBadge(label = "AI", color = NexoraPrimaryVariant, size = 42.dp)
-                        Spacer(Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Nexora Workspace",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                text = "Full Pro tools active - autosave ready - cloud ready",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Text(
-                            text = "Open",
-                            color = MaterialTheme.colorScheme.primary,
-                            style = MaterialTheme.typography.labelLarge,
-                            modifier = Modifier.clickable {
-                                onOpenEditor(
-                                    WorkspaceFile(
-                                        name = "Workspace.docx",
-                                        path = "nexora://workspace/home",
-                                        type = DocumentType.DOC,
-                                        sizeLabel = "Pro workspace"
-                                    )
-                                )
-                            }
-                        )
-                    }
-                }
-            }
-
-            item {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    NexoraSectionHeader(title = "Recent Files", action = "See all", onAction = onOpenFileManager)
+                    NexoraSectionHeader(title = "Recent Work", action = "See all", onAction = onOpenFileManager)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf("Recent", "Starred").forEach { label ->
                             NexoraPill(
@@ -246,22 +198,77 @@ private fun DashboardHeader() {
                 color = MaterialTheme.colorScheme.onBackground
             )
             Text(
-                text = "Pro productivity workspace",
+                text = "Pick up recent work or start a clean document",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
         NexoraLogoMark(size = 40.dp)
         Spacer(Modifier.width(10.dp))
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(NexoraPrimary),
-            contentAlignment = Alignment.Center
-        ) {
-            Text("Pro", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun ContinueEditingCard(
+    file: WorkspaceFile?,
+    onOpenFileManager: () -> Unit,
+    onOpenEditor: (WorkspaceFile) -> Unit
+) {
+    NexoraCard(
+        color = MaterialTheme.colorScheme.surface,
+        contentPadding = 14.dp,
+        onClick = { if (file == null) onOpenFileManager() else onOpenEditor(file) }
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            NexoraIconBadge(
+                label = file?.type?.badge ?: "Open",
+                color = file?.type?.color ?: NexoraPrimary,
+                size = 44.dp
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (file == null) "Continue editing" else file.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = if (file == null) "Open a local file to build your workspace" else "Last opened - ${file.sizeLabel}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Text("Resume", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
         }
+    }
+}
+
+@Composable
+private fun QuickCreateButton(
+    item: QuickCreate,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .clickable(onClick = onClick)
+            .padding(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        NexoraIconBadge(label = item.badge, color = item.color, size = 34.dp)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = item.title,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1
+        )
     }
 }
 

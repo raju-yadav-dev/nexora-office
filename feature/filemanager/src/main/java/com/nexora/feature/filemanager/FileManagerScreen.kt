@@ -63,10 +63,10 @@ fun FileManagerScreen(
     val context = LocalContext.current
     val viewModel: FileManagerViewModel = hiltViewModel()
     val state by viewModel.state.collectAsState()
-    var selectedType by remember { mutableStateOf("All") }
-    var gridMode by remember { mutableStateOf(false) }
+    var selectedType by remember { mutableStateOf("Recent") }
+    var viewMode by remember { mutableStateOf(FileViewMode.List) }
     var searchQuery by remember { mutableStateOf("") }
-    var newestFirst by remember { mutableStateOf(true) }
+    var sortMode by remember { mutableStateOf(FileSortMode.Date) }
     var permissionRefreshKey by remember { mutableStateOf(0) }
     val activity = context as? Activity
     val openLocalFileLauncher = rememberLauncherForActivityResult(
@@ -98,14 +98,19 @@ fun FileManagerScreen(
 
     val files = state.recentFiles
     val filteredFiles = files
-        .filter { file -> selectedType == "All" || file.type.label == selectedType }
+        .filter { file -> file.matchesFilter(selectedType) }
         .filter { file ->
             searchQuery.isBlank() ||
                 file.name.contains(searchQuery, ignoreCase = true) ||
                 file.path.contains(searchQuery, ignoreCase = true)
         }
         .let { visible ->
-            if (newestFirst) visible.sortedByDescending { it.lastModified } else visible.sortedBy { it.name }
+            when (sortMode) {
+                FileSortMode.Name -> visible.sortedBy { it.name.lowercase() }
+                FileSortMode.Date -> visible.sortedByDescending { it.lastModified }
+                FileSortMode.Size -> visible.sortedBy { it.sizeLabel }
+                FileSortMode.Type -> visible.sortedBy { it.type.name }
+            }
         }
 
     NexoraGradientBackground(modifier = Modifier.fillMaxSize()) {
@@ -129,11 +134,7 @@ fun FileManagerScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        NexoraToolbarButton(
-                            label = if (gridMode) "Grid" else "List",
-                            selected = gridMode,
-                            onClick = { gridMode = !gridMode }
-                        )
+                        NexoraToolbarButton(label = viewMode.label, onClick = { viewMode = viewMode.next() })
                     }
                     NexoraSearchField(
                         placeholder = "Search documents",
@@ -222,31 +223,20 @@ fun FileManagerScreen(
             }
 
             item {
-                Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    listOf("All", "Doc", "Sheet", "Slides", "PDF", "Text").forEach { label ->
-                        NexoraPill(
-                            label = label,
-                            selected = selectedType == label,
-                            onClick = { selectedType = label }
-                        )
-                    }
-                }
+                FilterRail(selectedType = selectedType, onFilterSelected = { selectedType = it })
             }
 
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     StorageTile(
-                        title = "Recents",
+                        title = "Recent",
                         detail = "${state.recentFiles.size} opened",
                         color = NexoraPrimaryVariant,
                         modifier = Modifier.weight(1f)
                     )
                     StorageTile(
-                        title = "Pro",
-                        detail = "All tools active",
+                        title = "Pinned",
+                        detail = "${state.recentFiles.count { it.isPinned }} saved",
                         color = NexoraSecondary,
                         modifier = Modifier.weight(1f)
                     )
@@ -254,11 +244,22 @@ fun FileManagerScreen(
             }
 
             item {
-                NexoraSectionHeader(
-                    title = if (gridMode) "Grid View" else "List View",
-                    action = if (newestFirst) "Newest" else "A-Z",
-                    onAction = { newestFirst = !newestFirst }
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    NexoraSectionHeader(
+                        title = selectedType,
+                        action = sortMode.label,
+                        onAction = { sortMode = sortMode.next() }
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FileViewMode.entries.forEach { mode ->
+                            NexoraPill(
+                                label = mode.label,
+                                selected = viewMode == mode,
+                                onClick = { viewMode = mode }
+                            )
+                        }
+                    }
+                }
             }
 
             if (filteredFiles.isEmpty()) {
@@ -276,7 +277,7 @@ fun FileManagerScreen(
                         )
                     }
                 }
-            } else if (gridMode) {
+            } else if (viewMode == FileViewMode.Grid) {
                 items(filteredFiles.chunked(2)) { row ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -296,7 +297,11 @@ fun FileManagerScreen(
                 }
             } else {
                 items(filteredFiles) { file ->
-                    FileListRow(file = file, onClick = { onOpenFile(file) })
+                    FileListRow(
+                        file = file,
+                        compact = viewMode == FileViewMode.Compact,
+                        onClick = { onOpenFile(file) }
+                    )
                 }
             }
         }
@@ -506,15 +511,16 @@ private fun initialPrimaryUri(): android.net.Uri? {
 @Composable
 private fun FileListRow(
     file: WorkspaceFile,
+    compact: Boolean,
     onClick: () -> Unit
 ) {
     NexoraCard(
         modifier = Modifier.fillMaxWidth(),
         onClick = onClick,
-        contentPadding = 12.dp
+        contentPadding = if (compact) 9.dp else 12.dp
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            NexoraIconBadge(label = file.type.badge, color = file.type.color, size = 40.dp)
+            NexoraIconBadge(label = file.type.badge, color = file.type.color, size = if (compact) 34.dp else 40.dp)
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -535,17 +541,38 @@ private fun FileListRow(
                         )
                     }
                 }
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    text = "${file.type.label} - ${file.sizeLabel} - ${file.locationLabel}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                if (!compact) {
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        text = "${file.type.label} - ${file.sizeLabel} - ${file.locationLabel}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
             Spacer(Modifier.width(10.dp))
             Text("Open", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+        }
+    }
+}
+
+@Composable
+private fun FilterRail(
+    selectedType: String,
+    onFilterSelected: (String) -> Unit
+) {
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        listOf("Recent", "Favorites", "DOCX", "XLSX", "PDF", "PPTX", "TXT", "Images", "Local", "Cloud").forEach { label ->
+            NexoraPill(
+                label = label,
+                selected = selectedType == label,
+                onClick = { onFilterSelected(label) }
+            )
         }
     }
 }
@@ -593,6 +620,37 @@ private val WorkspaceFile.locationLabel: String
         path.startsWith("/downloads") -> "Downloads"
         else -> path
     }
+
+private fun WorkspaceFile.matchesFilter(filter: String): Boolean = when (filter) {
+    "Recent" -> true
+    "Favorites" -> isPinned
+    "DOCX" -> type == DocumentType.DOC
+    "XLSX" -> type == DocumentType.SHEET
+    "PDF" -> type == DocumentType.PDF
+    "PPTX" -> type == DocumentType.SLIDE
+    "TXT" -> type == DocumentType.TEXT
+    "Images" -> path.endsWith(".png", true) || path.endsWith(".jpg", true) || path.endsWith(".jpeg", true)
+    "Local" -> path.startsWith("content://") || path.startsWith("/local") || path.startsWith("/downloads")
+    "Cloud" -> path.startsWith("/cloud")
+    else -> true
+}
+
+private enum class FileViewMode(val label: String) {
+    List("List"),
+    Grid("Grid"),
+    Compact("Compact");
+
+    fun next(): FileViewMode = entries[(ordinal + 1) % entries.size]
+}
+
+private enum class FileSortMode(val label: String) {
+    Date("Date"),
+    Name("Name"),
+    Size("Size"),
+    Type("Type");
+
+    fun next(): FileSortMode = entries[(ordinal + 1) % entries.size]
+}
 
 
 private val DocumentType.label: String

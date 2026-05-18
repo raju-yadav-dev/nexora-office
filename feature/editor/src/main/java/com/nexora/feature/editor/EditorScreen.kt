@@ -134,6 +134,11 @@ fun EditorScreen(
         mutableStateOf(openedFile?.type.toEditorMode())
     }
     var selectedTool by remember { mutableStateOf("Select") }
+    var toolbarPosition by remember { mutableStateOf(ToolbarPosition.Bottom) }
+    var chromeVisible by remember { mutableStateOf(true) }
+    var distractionFree by remember { mutableStateOf(false) }
+    var compactMode by remember { mutableStateOf(false) }
+    var fullscreenMode by remember { mutableStateOf(false) }
     var docxState by remember { mutableStateOf(DocxUiState()) }
     var pptxState by remember { mutableStateOf(PptxUiState()) }
     var textState by remember { mutableStateOf(TextUiState()) }
@@ -360,31 +365,32 @@ fun EditorScreen(
         }
     }
 
+    val readingMode = fullscreenMode || distractionFree
     NexoraGradientBackground(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = 18.dp, bottom = 18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(
+                    top = if (fullscreenMode) 6.dp else 12.dp,
+                    bottom = if (fullscreenMode) 6.dp else 12.dp
+                ),
+            verticalArrangement = Arrangement.spacedBy(if (compactMode) 8.dp else 10.dp)
         ) {
-            EditorHeader(
-                activeMode = activeMode,
-                activeTab = activeTab,
-                onDone = onDone,
-                onSaveAs = {
-                    val tab = activeTab ?: return@EditorHeader
+            val saveAsAction = {
+                val tab = activeTab
+                if (tab != null) {
                     when (tab.type) {
                         DocumentType.DOC -> docxSaveAsLauncher.launch(tab.title)
                         DocumentType.PDF -> pdfSaveAsLauncher.launch(tab.title)
                         DocumentType.TEXT -> textSaveAsLauncher.launch(tab.title)
                         DocumentType.SHEET -> xlsxSaveAsLauncher.launch(tab.title)
-                        else -> {
-                            editorError = "Save As is not available for this document type yet."
-                        }
+                        else -> editorError = "Save As is not available for this document type yet."
                     }
-                },
-                onSave = {
-                    val tab = activeTab ?: return@EditorHeader
+                }
+            }
+            val saveAction = saveAction@{
+                val tab = activeTab
+                if (tab != null) {
                     val uri = tab.sourcePath
                         .takeIf { it.startsWith("content://") }
                         ?.let(Uri::parse)
@@ -398,13 +404,13 @@ fun EditorScreen(
                                     docxRepository.saveDocx(contentResolver, uri, updatedDocument)
                                     editorViewModel.markDirty(tab.fileId, false)
                                 }
-                                return@EditorHeader
+                                return@saveAction
                             }
                         }
                         DocumentType.SHEET -> {
                             spreadsheetViewModel.save({ contentResolver }, uri)
                             editorViewModel.markDirty(tab.fileId, false)
-                            return@EditorHeader
+                            return@saveAction
                         }
                         DocumentType.SLIDE -> {
                             val document = pptxState.document
@@ -413,7 +419,7 @@ fun EditorScreen(
                                     pptxRepository.savePptx(contentResolver, uri, document)
                                     editorViewModel.markDirty(tab.fileId, false)
                                 }
-                                return@EditorHeader
+                                return@saveAction
                             }
                         }
                         DocumentType.TEXT -> {
@@ -422,14 +428,38 @@ fun EditorScreen(
                                     textRepository.saveText(contentResolver, uri, textState.content)
                                     editorViewModel.markDirty(tab.fileId, false)
                                 }
-                                return@EditorHeader
+                                return@saveAction
                             }
                         }
                         else -> Unit
                     }
                     editorViewModel.markDirty(tab.fileId, false)
                 }
-            )
+            }
+            if (!readingMode || chromeVisible) {
+                EditorHeader(
+                    activeMode = activeMode,
+                    activeTab = activeTab,
+                    toolbarPosition = toolbarPosition,
+                    fullscreenMode = fullscreenMode,
+                    distractionFree = distractionFree,
+                    compactMode = compactMode,
+                    onDone = onDone,
+                    onSaveAs = saveAsAction,
+                    onSave = saveAction,
+                    onToggleChrome = { chromeVisible = !chromeVisible },
+                    onToolbarPositionChange = { toolbarPosition = it },
+                    onToggleFullscreen = {
+                        fullscreenMode = !fullscreenMode
+                        chromeVisible = !fullscreenMode
+                    },
+                    onToggleDistractionFree = {
+                        distractionFree = !distractionFree
+                        chromeVisible = !distractionFree
+                    },
+                    onToggleCompact = { compactMode = !compactMode }
+                )
+            }
             if (editorError != null) {
                 NexoraCard(color = NexoraError.copy(alpha = 0.12f), contentPadding = 12.dp) {
                     Text(
@@ -441,20 +471,32 @@ fun EditorScreen(
                     NexoraToolbarButton(label = "Dismiss", onClick = { editorError = null })
                 }
             }
-            OpenTabStrip(
-                tabs = state.tabs,
-                activeTabId = state.activeTabId,
-                onSelectTab = { tab ->
-                    editorViewModel.activateTab(tab)
-                    activeMode = tab.type.toEditorMode()
+            if (!readingMode || chromeVisible) {
+                OpenTabStrip(
+                    tabs = state.tabs,
+                    activeTabId = state.activeTabId,
+                    compact = compactMode,
+                    onSelectTab = { tab ->
+                        editorViewModel.activateTab(tab)
+                        activeMode = tab.type.toEditorMode()
+                    }
+                )
+                ModeStrip(activeMode = activeMode, compact = compactMode, onModeSelected = { activeMode = it })
+                if (toolbarPosition == ToolbarPosition.Top) {
+                    EditorToolbar(
+                        activeMode = activeMode,
+                        selectedTool = selectedTool,
+                        compact = compactMode,
+                        onToolSelected = { selectedTool = it }
+                    )
                 }
-            )
-            ModeStrip(activeMode = activeMode, onModeSelected = { activeMode = it })
+            }
 
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
+                    .clickable { chromeVisible = true }
             ) {
                 when (activeMode) {
                     EditorMode.Document -> DocumentEditor(
@@ -507,13 +549,37 @@ fun EditorScreen(
                         }
                     )
                 }
+                if (readingMode && !chromeVisible) {
+                    NexoraToolbarButton(
+                        label = "Tools",
+                        selected = true,
+                        onClick = { chromeVisible = true },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(8.dp)
+                    )
+                }
+                if ((!readingMode || chromeVisible) && toolbarPosition == ToolbarPosition.Floating) {
+                    FloatingEditorToolbar(
+                        activeMode = activeMode,
+                        selectedTool = selectedTool,
+                        compact = compactMode,
+                        onToolSelected = { selectedTool = it },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(12.dp)
+                    )
+                }
             }
 
-            EditorToolbar(
-                activeMode = activeMode,
-                selectedTool = selectedTool,
-                onToolSelected = { selectedTool = it }
-            )
+            if ((!readingMode || chromeVisible) && toolbarPosition == ToolbarPosition.Bottom) {
+                EditorToolbar(
+                    activeMode = activeMode,
+                    selectedTool = selectedTool,
+                    compact = compactMode,
+                    onToolSelected = { selectedTool = it }
+                )
+            }
         }
     }
 }
@@ -522,43 +588,66 @@ fun EditorScreen(
 private fun EditorHeader(
     activeMode: EditorMode,
     activeTab: EditorTab?,
+    toolbarPosition: ToolbarPosition,
+    fullscreenMode: Boolean,
+    distractionFree: Boolean,
+    compactMode: Boolean,
     onDone: () -> Unit,
     onSaveAs: () -> Unit,
-    onSave: () -> Unit
+    onSave: () -> Unit,
+    onToggleChrome: () -> Unit,
+    onToolbarPositionChange: (ToolbarPosition) -> Unit,
+    onToggleFullscreen: () -> Unit,
+    onToggleDistractionFree: () -> Unit,
+    onToggleCompact: () -> Unit
 ) {
     val title = activeTab?.title ?: activeMode.fileName
     val subtitle = when {
-        activeTab?.dirty == true -> "Unsaved changes - Pro editor"
-        activeTab?.sourcePath?.startsWith("content://") == true -> "Local file opened - Pro editor"
-        else -> "Autosaved - Pro editor"
+        fullscreenMode -> "Fullscreen document view"
+        distractionFree -> "Distraction-free reading"
+        activeTab?.dirty == true -> "Unsaved changes"
+        activeTab?.sourcePath?.startsWith("content://") == true -> "Local file"
+        else -> "Autosaved"
     }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = "Done",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.clickable(onClick = onDone)
-        )
-        Spacer(Modifier.width(14.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            NexoraToolbarButton(label = "Done", onClick = onDone)
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
+                )
+            }
+            NexoraToolbarButton(label = "Save", selected = activeTab?.dirty == true, onClick = onSave)
+            Spacer(Modifier.width(8.dp))
+            NexoraToolbarButton(label = "More", onClick = onSaveAs)
         }
-        NexoraToolbarButton(label = "Save As", onClick = onSaveAs)
-        Spacer(Modifier.width(8.dp))
-        NexoraToolbarButton(label = "Save", onClick = onSave)
-        Spacer(Modifier.width(8.dp))
-        NexoraToolbarButton(label = "...")
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            NexoraPill(label = "Read", selected = distractionFree, onClick = onToggleDistractionFree)
+            NexoraPill(label = "Fullscreen", selected = fullscreenMode, onClick = onToggleFullscreen)
+            NexoraPill(label = "Compact", selected = compactMode, onClick = onToggleCompact)
+            NexoraPill(label = "Hide chrome", selected = false, onClick = onToggleChrome)
+            ToolbarPosition.entries.forEach { position ->
+                NexoraPill(
+                    label = position.label,
+                    selected = toolbarPosition == position,
+                    onClick = { onToolbarPositionChange(position) }
+                )
+            }
+        }
     }
 }
 
@@ -566,18 +655,22 @@ private fun EditorHeader(
 private fun OpenTabStrip(
     tabs: List<EditorTab>,
     activeTabId: String?,
+    compact: Boolean,
     onSelectTab: (EditorTab) -> Unit
 ) {
     Row(
         modifier = Modifier.horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         tabs.forEach { tab ->
             NexoraPill(
-                label = if (tab.dirty) "${tab.title} *" else tab.title,
+                label = if (tab.dirty) "${tab.title} *  x" else "${tab.title}  x",
                 selected = tab.fileId == activeTabId,
                 onClick = { onSelectTab(tab) }
             )
+        }
+        if (!compact) {
+            NexoraPill(label = "Sessions", selected = false)
         }
     }
 }
@@ -585,13 +678,15 @@ private fun OpenTabStrip(
 @Composable
 private fun ModeStrip(
     activeMode: EditorMode,
+    compact: Boolean,
     onModeSelected: (EditorMode) -> Unit
 ) {
     Row(
         modifier = Modifier.horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        EditorMode.entries.forEach { mode ->
+        val modes = if (compact) EditorMode.entries.filterNot { it == EditorMode.Workspace } else EditorMode.entries
+        modes.forEach { mode ->
             NexoraPill(
                 label = mode.label,
                 selected = mode == activeMode,
@@ -608,19 +703,18 @@ private fun DocumentEditor(
     onToggleEdit: () -> Unit,
     onEditTextChange: (String) -> Unit
 ) {
-    NexoraCard(contentPadding = 0.dp, modifier = Modifier.fillMaxSize()) {
+    NexoraCard(contentPadding = 0.dp, color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFFF8F8FA))
-                .padding(18.dp),
+                .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = activeTab?.title ?: "Document",
                     style = MaterialTheme.typography.titleMedium,
-                    color = Color(0xFF111827),
+                    color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.weight(1f)
                 )
                 NexoraToolbarButton(
@@ -635,7 +729,7 @@ private fun DocumentEditor(
                     Text(
                         text = "Loading document...",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFF6B7280)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 state.error != null -> {
@@ -663,16 +757,24 @@ private fun DocumentEditor(
                     )
                 }
                 state.document != null -> {
-                    DocxDocumentView(
-                        document = state.document,
-                        modifier = Modifier.weight(1f)
-                    )
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color.White)
+                            .padding(horizontal = 18.dp, vertical = 20.dp)
+                    ) {
+                        DocxDocumentView(
+                            document = state.document,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
                 }
                 else -> {
                     Text(
                         text = "Open a DOCX file to start editing.",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFF6B7280)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -1294,22 +1396,21 @@ private fun TextEditor(
     state: TextUiState,
     onContentChanged: (String) -> Unit
 ) {
-    NexoraCard(contentPadding = 0.dp, modifier = Modifier.fillMaxSize()) {
+    NexoraCard(contentPadding = 0.dp, color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFFF7F7F8))
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
                 text = activeTab?.title ?: "Text File",
                 style = MaterialTheme.typography.titleLarge,
-                color = Color(0xFF111827)
+                color = MaterialTheme.colorScheme.onSurface
             )
 
             when {
-                state.isLoading -> Text("Loading text file...", color = Color(0xFF6B7280))
+                state.isLoading -> Text("Loading text file...", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 state.error != null -> Text(state.error, color = NexoraError)
                 else -> {
                     OutlinedTextField(
@@ -1318,10 +1419,10 @@ private fun TextEditor(
                         modifier = Modifier
                             .fillMaxSize()
                             .clip(RoundedCornerShape(12.dp)),
-                        textStyle = MaterialTheme.typography.bodyLarge,
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                         colors = TextFieldDefaults.colors(
-                            focusedContainerColor = Color.White,
-                            unfocusedContainerColor = Color.White,
+                            focusedContainerColor = MaterialTheme.colorScheme.surface,
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surface,
                             focusedIndicatorColor = Color.Transparent,
                             unfocusedIndicatorColor = Color.Transparent
                         )
@@ -1484,16 +1585,60 @@ private fun WorkspacePanel(
 private fun EditorToolbar(
     activeMode: EditorMode,
     selectedTool: String,
+    compact: Boolean,
     onToolSelected: (String) -> Unit
 ) {
     val tools = when (activeMode) {
-        EditorMode.Document -> listOf("B", "I", "U", "Align", "More")
-        EditorMode.Spreadsheet -> listOf("fx", "Cells", "Sort", "Chart", "More")
-        EditorMode.Presentation -> listOf("Text", "Image", "Shape", "Table", "More")
-        EditorMode.Pdf -> listOf("Annotate", "Highlight", "Draw", "Text", "More")
-        EditorMode.Text -> listOf("Find", "Replace", "Indent", "Wrap", "More")
-        EditorMode.Workspace -> listOf("Pin", "Recent", "Cloud", "Open", "More")
+        EditorMode.Document -> listOf("B", "I", "U", "Align", "Insert", "Review")
+        EditorMode.Spreadsheet -> listOf("fx", "Format", "Sort", "Chart", "Data", "Review")
+        EditorMode.Presentation -> listOf("Text", "Image", "Shape", "Table", "Design", "Present")
+        EditorMode.Pdf -> listOf("Annotate", "Highlight", "Draw", "Text", "Share", "More")
+        EditorMode.Text -> listOf("Find", "Replace", "Indent", "Wrap", "Count", "More")
+        EditorMode.Workspace -> listOf("Pin", "Recent", "Cloud", "Open", "Sessions", "More")
     }
+    NexoraCard(contentPadding = if (compact) 6.dp else 8.dp, color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+            tools.forEach { label ->
+                NexoraToolbarButton(
+                    label = label,
+                    selected = selectedTool == label,
+                    onClick = { onToolSelected(label) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FloatingEditorToolbar(
+    activeMode: EditorMode,
+    selectedTool: String,
+    compact: Boolean,
+    onToolSelected: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(modifier = modifier.fillMaxWidth()) {
+        EditorToolbar(
+            activeMode = activeMode,
+            selectedTool = selectedTool,
+            compact = compact,
+            onToolSelected = onToolSelected
+        )
+    }
+}
+
+private enum class ToolbarPosition(val label: String) {
+    Top("Top toolbar"),
+    Bottom("Bottom toolbar"),
+    Floating("Floating")
+}
+
+@Composable
+private fun CompactToolRow(
+    tools: List<String>,
+    selectedTool: String,
+    onToolSelected: (String) -> Unit
+) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
         tools.forEach { label ->
             NexoraToolbarButton(

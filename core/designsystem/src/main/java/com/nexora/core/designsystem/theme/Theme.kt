@@ -31,6 +31,11 @@ private val DarkColors = darkColorScheme(
     surfaceVariant = NexoraDarkSurfaceHigh,
     onSurfaceVariant = NexoraDarkMuted,
     outline = NexoraDarkOutline,
+    outlineVariant = NexoraDarkOutline.copy(alpha = 0.62f),
+    surfaceContainer = NexoraDarkSurface,
+    surfaceContainerHigh = NexoraDarkSurfaceHigh,
+    inverseSurface = NexoraLightSurface,
+    inverseOnSurface = NexoraLightOnSurface,
 )
 
 private val LightColors = lightColorScheme(
@@ -50,27 +55,41 @@ private val LightColors = lightColorScheme(
     surfaceVariant = NexoraLightSurfaceHigh,
     onSurfaceVariant = NexoraLightMuted,
     outline = NexoraLightOutline,
+    outlineVariant = NexoraLightOutline.copy(alpha = 0.62f),
+    surfaceContainer = NexoraLightSurface,
+    surfaceContainerHigh = NexoraLightSurfaceHigh,
+    inverseSurface = NexoraInk,
+    inverseOnSurface = Color.White,
+)
+
+private val AmoledColors = DarkColors.copy(
+    background = NexoraAmoled,
+    surface = Color(0xFF050505),
+    surfaceVariant = Color(0xFF111111),
+    surfaceContainer = Color(0xFF050505),
+    surfaceContainerHigh = Color(0xFF141414),
+    outline = Color(0xFF2A2A2A)
 )
 
 private val NexoraTypography = Typography(
     headlineLarge = TextStyle(
         fontWeight = FontWeight.Bold,
-        fontSize = 30.sp,
-        lineHeight = 36.sp
+        fontSize = 28.sp,
+        lineHeight = 34.sp
     ),
     headlineMedium = TextStyle(
         fontWeight = FontWeight.Bold,
-        fontSize = 25.sp,
-        lineHeight = 31.sp
+        fontSize = 24.sp,
+        lineHeight = 30.sp
     ),
     headlineSmall = TextStyle(
         fontWeight = FontWeight.SemiBold,
-        fontSize = 22.sp,
-        lineHeight = 28.sp
+        fontSize = 20.sp,
+        lineHeight = 26.sp
     ),
     titleLarge = TextStyle(
         fontWeight = FontWeight.SemiBold,
-        fontSize = 19.sp,
+        fontSize = 18.sp,
         lineHeight = 24.sp
     ),
     titleMedium = TextStyle(
@@ -80,7 +99,7 @@ private val NexoraTypography = Typography(
     ),
     bodyLarge = TextStyle(
         fontWeight = FontWeight.Normal,
-        fontSize = 15.sp,
+        fontSize = 16.sp,
         lineHeight = 22.sp
     ),
     bodyMedium = TextStyle(
@@ -95,8 +114,8 @@ private val NexoraTypography = Typography(
     ),
     labelMedium = TextStyle(
         fontWeight = FontWeight.Medium,
-        fontSize = 11.sp,
-        lineHeight = 15.sp
+        fontSize = 12.sp,
+        lineHeight = 16.sp
     )
 )
 
@@ -104,17 +123,46 @@ private val NexoraShapes = Shapes(
     extraSmall = RoundedCornerShape(6.dp),
     small = RoundedCornerShape(8.dp),
     medium = RoundedCornerShape(12.dp),
-    large = RoundedCornerShape(16.dp),
-    extraLarge = RoundedCornerShape(22.dp)
+    large = RoundedCornerShape(14.dp),
+    extraLarge = RoundedCornerShape(18.dp)
 )
+
+object NexoraSpacing {
+    val xxs = 4.dp
+    val xs = 8.dp
+    val sm = 12.dp
+    val md = 16.dp
+    val lg = 20.dp
+    val xl = 24.dp
+}
+
+object NexoraRadius {
+    val control = 8.dp
+    val card = 12.dp
+    val sheet = 16.dp
+}
+
+enum class NexoraThemeMode {
+    System,
+    Light,
+    Dark,
+    Amoled
+}
 
 @Composable
 fun NexoraTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
+    themeMode: NexoraThemeMode = NexoraThemeMode.System,
     content: @Composable () -> Unit
 ) {
+    val colorScheme = when (themeMode) {
+        NexoraThemeMode.Light -> LightColors
+        NexoraThemeMode.Dark -> DarkColors
+        NexoraThemeMode.Amoled -> AmoledColors
+        NexoraThemeMode.System -> if (darkTheme) DarkColors else LightColors
+    }
     MaterialTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
+        colorScheme = colorScheme,
         typography = NexoraTypography,
         shapes = NexoraShapes,
         content = content
