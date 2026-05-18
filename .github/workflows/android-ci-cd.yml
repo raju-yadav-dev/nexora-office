@@ -88,22 +88,21 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Set up Gradle with caching
+      - name: Set up Gradle wrapper cache
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: current
           cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
 
-      - name: Resolve Gradle command
+      - name: Prepare Gradle wrapper
         id: gradle_cmd
         shell: bash
         run: |
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-            echo "cmd=./gradlew" >> "${GITHUB_OUTPUT}"
-          else
-            echo "cmd=gradle" >> "${GITHUB_OUTPUT}"
+          if [ ! -f "./gradlew" ]; then
+            echo "Gradle wrapper is required for CI builds." >&2
+            exit 1
           fi
+          chmod +x ./gradlew
+          echo "cmd=./gradlew" >> "${GITHUB_OUTPUT}"
 
       - name: Run lint (all modules)
         run: ${{ steps.gradle_cmd.outputs.cmd }} --stacktrace --no-configuration-cache lint
@@ -141,22 +140,21 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Set up Gradle with caching
+      - name: Set up Gradle wrapper cache
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: current
           cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
 
-      - name: Resolve Gradle command
+      - name: Prepare Gradle wrapper
         id: gradle_cmd
         shell: bash
         run: |
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-            echo "cmd=./gradlew" >> "${GITHUB_OUTPUT}"
-          else
-            echo "cmd=gradle" >> "${GITHUB_OUTPUT}"
+          if [ ! -f "./gradlew" ]; then
+            echo "Gradle wrapper is required for APK builds." >&2
+            exit 1
           fi
+          chmod +x ./gradlew
+          echo "cmd=./gradlew" >> "${GITHUB_OUTPUT}"
 
       - name: Decode Android keystore (optional for signed release)
         if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' }}
@@ -183,12 +181,12 @@ jobs:
         run: ${{ steps.gradle_cmd.outputs.cmd }} --stacktrace :app:assembleRelease
 
       - name: Upload debug APK
-        if: always()
+        if: ${{ always() && (github.event_name != 'workflow_dispatch' || github.event.inputs.build_variant == 'debug' || github.event.inputs.build_variant == 'all') }}
         uses: actions/upload-artifact@v4
         with:
           name: ${{ needs.prepare.outputs.artifact_prefix }}-debug-apk
           path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
 
       - name: Upload release APK
