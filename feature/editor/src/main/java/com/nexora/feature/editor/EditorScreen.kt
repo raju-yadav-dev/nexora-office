@@ -76,8 +76,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.nexora.core.designsystem.component.NexoraCard
-import com.nexora.core.designsystem.component.NexoraGradientBackground
-import com.nexora.core.designsystem.component.NexoraIconBadge
 import com.nexora.core.designsystem.component.NexoraLogoMark
 import com.nexora.core.designsystem.component.NexoraPill
 import com.nexora.core.designsystem.component.NexoraToolbarButton
@@ -134,10 +132,10 @@ fun EditorScreen(
         mutableStateOf(openedFile?.type.toEditorMode())
     }
     var selectedTool by remember { mutableStateOf("Select") }
-    var toolbarPosition by remember { mutableStateOf(ToolbarPosition.Bottom) }
+    var toolbarPosition by remember { mutableStateOf(ToolbarPosition.Floating) }
     var chromeVisible by remember { mutableStateOf(true) }
-    var distractionFree by remember { mutableStateOf(false) }
-    var compactMode by remember { mutableStateOf(false) }
+    var toolsExpanded by remember { mutableStateOf(false) }
+    var distractionFree by remember { mutableStateOf(true) }
     var fullscreenMode by remember { mutableStateOf(false) }
     var docxState by remember { mutableStateOf(DocxUiState()) }
     var pptxState by remember { mutableStateOf(PptxUiState()) }
@@ -366,15 +364,14 @@ fun EditorScreen(
     }
 
     val readingMode = fullscreenMode || distractionFree
-    NexoraGradientBackground(modifier = Modifier.fillMaxSize()) {
+    val showEditorTools = chromeVisible && toolsExpanded && activeMode != EditorMode.Pdf
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(
-                    top = if (fullscreenMode) 6.dp else 12.dp,
-                    bottom = if (fullscreenMode) 6.dp else 12.dp
-                ),
-            verticalArrangement = Arrangement.spacedBy(if (compactMode) 8.dp else 10.dp)
+            modifier = Modifier.fillMaxSize()
         ) {
             val saveAsAction = {
                 val tab = activeTab
@@ -443,11 +440,11 @@ fun EditorScreen(
                     toolbarPosition = toolbarPosition,
                     fullscreenMode = fullscreenMode,
                     distractionFree = distractionFree,
-                    compactMode = compactMode,
                     onDone = onDone,
                     onSaveAs = saveAsAction,
                     onSave = saveAction,
                     onToggleChrome = { chromeVisible = !chromeVisible },
+                    onToggleTools = { toolsExpanded = !toolsExpanded },
                     onToolbarPositionChange = { toolbarPosition = it },
                     onToggleFullscreen = {
                         fullscreenMode = !fullscreenMode
@@ -457,7 +454,6 @@ fun EditorScreen(
                         distractionFree = !distractionFree
                         chromeVisible = !distractionFree
                     },
-                    onToggleCompact = { compactMode = !compactMode }
                 )
             }
             if (editorError != null) {
@@ -471,32 +467,32 @@ fun EditorScreen(
                     NexoraToolbarButton(label = "Dismiss", onClick = { editorError = null })
                 }
             }
-            if (!readingMode || chromeVisible) {
+            if ((!readingMode || chromeVisible) && state.tabs.size > 1) {
                 OpenTabStrip(
                     tabs = state.tabs,
                     activeTabId = state.activeTabId,
-                    compact = compactMode,
                     onSelectTab = { tab ->
                         editorViewModel.activateTab(tab)
                         activeMode = tab.type.toEditorMode()
                     }
                 )
-                ModeStrip(activeMode = activeMode, compact = compactMode, onModeSelected = { activeMode = it })
-                if (toolbarPosition == ToolbarPosition.Top) {
+            }
+            if (showEditorTools && toolbarPosition == ToolbarPosition.Top) {
                     EditorToolbar(
                         activeMode = activeMode,
                         selectedTool = selectedTool,
-                        compact = compactMode,
                         onToolSelected = { selectedTool = it }
                     )
-                }
             }
 
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .fillMaxSize()
                     .weight(1f)
-                    .clickable { chromeVisible = true }
+                    .clickable {
+                        chromeVisible = true
+                        if (readingMode) toolsExpanded = false
+                    }
             ) {
                 when (activeMode) {
                     EditorMode.Document -> DocumentEditor(
@@ -541,17 +537,10 @@ fun EditorScreen(
                             }
                         }
                     )
-                    EditorMode.Workspace -> WorkspacePanel(
-                        tabs = state.tabs,
-                        onSelectTab = { tab ->
-                            editorViewModel.activateTab(tab)
-                            activeMode = tab.type.toEditorMode()
-                        }
-                    )
                 }
                 if (readingMode && !chromeVisible) {
                     NexoraToolbarButton(
-                        label = "Tools",
+                        label = "More",
                         selected = true,
                         onClick = { chromeVisible = true },
                         modifier = Modifier
@@ -559,11 +548,10 @@ fun EditorScreen(
                             .padding(8.dp)
                     )
                 }
-                if ((!readingMode || chromeVisible) && toolbarPosition == ToolbarPosition.Floating) {
+                if (showEditorTools && toolbarPosition == ToolbarPosition.Floating) {
                     FloatingEditorToolbar(
                         activeMode = activeMode,
                         selectedTool = selectedTool,
-                        compact = compactMode,
                         onToolSelected = { selectedTool = it },
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
@@ -572,11 +560,10 @@ fun EditorScreen(
                 }
             }
 
-            if ((!readingMode || chromeVisible) && toolbarPosition == ToolbarPosition.Bottom) {
+            if (showEditorTools && toolbarPosition == ToolbarPosition.Bottom) {
                 EditorToolbar(
                     activeMode = activeMode,
                     selectedTool = selectedTool,
-                    compact = compactMode,
                     onToolSelected = { selectedTool = it }
                 )
             }
@@ -591,15 +578,14 @@ private fun EditorHeader(
     toolbarPosition: ToolbarPosition,
     fullscreenMode: Boolean,
     distractionFree: Boolean,
-    compactMode: Boolean,
     onDone: () -> Unit,
     onSaveAs: () -> Unit,
     onSave: () -> Unit,
     onToggleChrome: () -> Unit,
+    onToggleTools: () -> Unit,
     onToolbarPositionChange: (ToolbarPosition) -> Unit,
     onToggleFullscreen: () -> Unit,
-    onToggleDistractionFree: () -> Unit,
-    onToggleCompact: () -> Unit
+    onToggleDistractionFree: () -> Unit
 ) {
     val title = activeTab?.title ?: activeMode.fileName
     val subtitle = when {
@@ -609,15 +595,21 @@ private fun EditorHeader(
         activeTab?.sourcePath?.startsWith("content://") == true -> "Local file"
         else -> "Autosaved"
     }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.98f))
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            NexoraToolbarButton(label = "Done", onClick = onDone)
-            Spacer(Modifier.width(10.dp))
+            NexoraToolbarButton(label = "<", onClick = onDone)
+            Spacer(Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = title,
                     style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onBackground,
+                    color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -628,18 +620,19 @@ private fun EditorHeader(
                     maxLines = 1
                 )
             }
-            NexoraToolbarButton(label = "Save", selected = activeTab?.dirty == true, onClick = onSave)
-            Spacer(Modifier.width(8.dp))
-            NexoraToolbarButton(label = "More", onClick = onSaveAs)
+            NexoraToolbarButton(label = if (activeTab?.dirty == true) "Save*" else "Saved", selected = activeTab?.dirty == true, onClick = onSave)
+            Spacer(Modifier.width(6.dp))
+            NexoraToolbarButton(label = "Edit", selected = false, onClick = onToggleTools)
+            Spacer(Modifier.width(6.dp))
+            NexoraToolbarButton(label = "...", onClick = onSaveAs)
         }
         Row(
             modifier = Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             NexoraPill(label = "Read", selected = distractionFree, onClick = onToggleDistractionFree)
-            NexoraPill(label = "Fullscreen", selected = fullscreenMode, onClick = onToggleFullscreen)
-            NexoraPill(label = "Compact", selected = compactMode, onClick = onToggleCompact)
-            NexoraPill(label = "Hide chrome", selected = false, onClick = onToggleChrome)
+            NexoraPill(label = "Full", selected = fullscreenMode, onClick = onToggleFullscreen)
+            NexoraPill(label = "Hide", selected = false, onClick = onToggleChrome)
             ToolbarPosition.entries.forEach { position ->
                 NexoraPill(
                     label = position.label,
@@ -655,42 +648,21 @@ private fun EditorHeader(
 private fun OpenTabStrip(
     tabs: List<EditorTab>,
     activeTabId: String?,
-    compact: Boolean,
     onSelectTab: (EditorTab) -> Unit
 ) {
     Row(
-        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 8.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         tabs.forEach { tab ->
             NexoraPill(
-                label = if (tab.dirty) "${tab.title} *  x" else "${tab.title}  x",
+                label = if (tab.dirty) "${tab.title} *" else tab.title,
                 selected = tab.fileId == activeTabId,
                 onClick = { onSelectTab(tab) }
-            )
-        }
-        if (!compact) {
-            NexoraPill(label = "Sessions", selected = false)
-        }
-    }
-}
-
-@Composable
-private fun ModeStrip(
-    activeMode: EditorMode,
-    compact: Boolean,
-    onModeSelected: (EditorMode) -> Unit
-) {
-    Row(
-        modifier = Modifier.horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        val modes = if (compact) EditorMode.entries.filterNot { it == EditorMode.Workspace } else EditorMode.entries
-        modes.forEach { mode ->
-            NexoraPill(
-                label = mode.label,
-                selected = mode == activeMode,
-                onClick = { onModeSelected(mode) }
             )
         }
     }
@@ -703,41 +675,30 @@ private fun DocumentEditor(
     onToggleEdit: () -> Unit,
     onEditTextChange: (String) -> Unit
 ) {
-    NexoraCard(contentPadding = 0.dp, color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = activeTab?.title ?: "Document",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.weight(1f)
-                )
-                NexoraToolbarButton(
-                    label = if (state.isEditing) "Preview" else "Edit",
-                    selected = state.isEditing,
-                    onClick = onToggleEdit
-                )
-            }
-
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
             when {
                 state.isLoading -> {
-                    Text(
-                        text = "Loading document...",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "Loading document...",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
                 state.error != null -> {
-                    Text(
-                        text = state.error,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = NexoraError
-                    )
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(
+                            text = state.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = NexoraError
+                        )
+                    }
                 }
                 state.isEditing -> {
                     OutlinedTextField(
@@ -745,11 +706,12 @@ private fun DocumentEditor(
                         onValueChange = onEditTextChange,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f),
+                            .weight(1f)
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
                         textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color(0xFF111827)),
                         colors = TextFieldDefaults.colors(
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent,
+                            focusedContainerColor = Color.White,
+                            unfocusedContainerColor = Color.White,
                             focusedIndicatorColor = Color.Transparent,
                             unfocusedIndicatorColor = Color.Transparent,
                             cursorColor = NexoraPrimary
@@ -760,9 +722,7 @@ private fun DocumentEditor(
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color.White)
-                            .padding(horizontal = 18.dp, vertical = 20.dp)
+                            .padding(horizontal = 8.dp)
                     ) {
                         DocxDocumentView(
                             document = state.document,
@@ -771,14 +731,24 @@ private fun DocumentEditor(
                     }
                 }
                 else -> {
-                    Text(
-                        text = "Open a DOCX file to start editing.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "Open a DOCX file to start editing.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }
+        NexoraToolbarButton(
+            label = if (state.isEditing) "Preview" else "Edit",
+            selected = state.isEditing,
+            onClick = onToggleEdit,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(12.dp)
+        )
     }
 }
 
@@ -786,62 +756,72 @@ private fun DocumentEditor(
 private fun DocxDocumentView(document: DocxDocument, modifier: Modifier = Modifier) {
     LazyColumn(
         modifier = modifier,
-        contentPadding = PaddingValues(bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        contentPadding = PaddingValues(top = 10.dp, bottom = 72.dp),
+        verticalArrangement = Arrangement.spacedBy(0.dp)
     ) {
-        items(document.blocks) { block ->
-            when (block) {
-                is HeadingBlock -> {
-                    Text(
-                        text = runsToAnnotatedString(block.runs),
-                        style = when (block.level) {
-                            1 -> MaterialTheme.typography.headlineMedium
-                            2 -> MaterialTheme.typography.headlineSmall
-                            else -> MaterialTheme.typography.titleLarge
-                        },
-                        color = Color(0xFF111827)
-                    )
-                }
-                is ParagraphBlock -> {
-                    Text(
-                        text = runsToAnnotatedString(block.runs, block.listStyle),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = Color(0xFF111827),
-                        textAlign = block.alignment.toTextAlign()
-                    )
-                }
-                is TableBlock -> {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        block.rows.forEach { row ->
-                            Row(modifier = Modifier.fillMaxWidth()) {
-                                row.forEach { cell ->
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .border(1.dp, Color(0xFFD4DAE6))
-                                            .padding(8.dp)
-                                    ) {
-                                        Text(
-                                            text = cell,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = Color(0xFF111827)
-                                        )
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color.White)
+                    .border(1.dp, Color(0xFFE5E7EB), RoundedCornerShape(4.dp))
+                    .padding(horizontal = 22.dp, vertical = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                document.blocks.forEach { block ->
+                    when (block) {
+                        is HeadingBlock -> {
+                            Text(
+                                text = runsToAnnotatedString(block.runs),
+                                style = when (block.level) {
+                                    1 -> MaterialTheme.typography.headlineMedium
+                                    2 -> MaterialTheme.typography.headlineSmall
+                                    else -> MaterialTheme.typography.titleLarge
+                                },
+                                color = Color(0xFF111827)
+                            )
+                        }
+                        is ParagraphBlock -> {
+                            Text(
+                                text = runsToAnnotatedString(block.runs, block.listStyle),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = Color(0xFF111827),
+                                textAlign = block.alignment.toTextAlign()
+                            )
+                        }
+                        is TableBlock -> {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                block.rows.forEach { row ->
+                                    Row(modifier = Modifier.fillMaxWidth()) {
+                                        row.forEach { cell ->
+                                            Box(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .border(1.dp, Color(0xFFD4DAE6))
+                                                    .padding(8.dp)
+                                            ) {
+                                                Text(
+                                                    text = cell,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    color = Color(0xFF111827)
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
+                        is ImageBlock -> {
+                            Text(
+                                text = "${block.description} (image)",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color(0xFF6B7280)
+                            )
+                        }
+                        else -> Unit
                     }
                 }
-                is ImageBlock -> {
-                    NexoraCard(contentPadding = 12.dp) {
-                        Text(
-                            text = "${block.description} (image)",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color(0xFF6B7280)
-                        )
-                    }
-                }
-                else -> Unit
             }
         }
     }
@@ -1396,19 +1376,15 @@ private fun TextEditor(
     state: TextUiState,
     onContentChanged: (String) -> Unit
 ) {
-    NexoraCard(contentPadding = 0.dp, color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .padding(8.dp)
+    ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            modifier = Modifier.fillMaxSize()
         ) {
-            Text(
-                text = activeTab?.title ?: "Text File",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-
             when {
                 state.isLoading -> Text("Loading text file...", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 state.error != null -> Text(state.error, color = NexoraError)
@@ -1418,7 +1394,7 @@ private fun TextEditor(
                         onValueChange = onContentChanged,
                         modifier = Modifier
                             .fillMaxSize()
-                            .clip(RoundedCornerShape(12.dp)),
+                            .clip(RoundedCornerShape(4.dp)),
                         textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                         colors = TextFieldDefaults.colors(
                             focusedContainerColor = MaterialTheme.colorScheme.surface,
@@ -1458,7 +1434,11 @@ private fun PdfViewer(uri: Uri) {
         onDispose { session.close() }
     }
 
-    NexoraCard(contentPadding = 0.dp, modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+    ) {
         if (isLoading) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
@@ -1485,8 +1465,9 @@ private fun PdfViewer(uri: Uri) {
             }
         } else {
             LazyColumn(
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 itemsIndexed(List(pageCount) { it }) { index, page ->
                     PdfPage(session = session, index = page, pageNumber = index + 1)
@@ -1501,10 +1482,10 @@ private fun PdfPage(session: PdfPageRenderer, index: Int, pageNumber: Int) {
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(4.dp))
             .background(Color.White)
-            .border(1.dp, Color(0xFFE5E7EB), RoundedCornerShape(12.dp))
-            .padding(8.dp)
+            .border(1.dp, Color(0xFFE5E7EB), RoundedCornerShape(4.dp))
+            .padding(4.dp)
     ) {
         val density = LocalDensity.current
         val targetWidthPx = with(density) { maxWidth.toPx().toInt().coerceAtLeast(1) }
@@ -1536,56 +1517,9 @@ private fun PdfPage(session: PdfPageRenderer, index: Int, pageNumber: Int) {
 }
 
 @Composable
-private fun WorkspacePanel(
-    tabs: List<EditorTab>,
-    onSelectTab: (EditorTab) -> Unit
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxSize()) {
-        NexoraCard(color = NexoraPrimary.copy(alpha = 0.16f)) {
-            Text(
-                text = "Multi Tab Workspace",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Text(
-                text = "Pin, switch and continue documents easily",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        tabs.forEach { tab ->
-            NexoraCard(contentPadding = 12.dp, onClick = { onSelectTab(tab) }) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    NexoraIconBadge(
-                        label = tab.type.badge,
-                        color = tab.type.color,
-                        size = 36.dp
-                    )
-                    Spacer(Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(tab.title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
-                        Text(
-                            text = if (tab.sourcePath.startsWith("content://")) {
-                                "Device file - active workspace"
-                            } else {
-                                "Pro workspace tab"
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Text("Open", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun EditorToolbar(
     activeMode: EditorMode,
     selectedTool: String,
-    compact: Boolean,
     onToolSelected: (String) -> Unit
 ) {
     val tools = when (activeMode) {
@@ -1594,9 +1528,8 @@ private fun EditorToolbar(
         EditorMode.Presentation -> listOf("Text", "Image", "Shape", "Table", "Design", "Present")
         EditorMode.Pdf -> listOf("Annotate", "Highlight", "Draw", "Text", "Share", "More")
         EditorMode.Text -> listOf("Find", "Replace", "Indent", "Wrap", "Count", "More")
-        EditorMode.Workspace -> listOf("Pin", "Recent", "Cloud", "Open", "Sessions", "More")
     }
-    NexoraCard(contentPadding = if (compact) 6.dp else 8.dp, color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)) {
+    NexoraCard(contentPadding = 6.dp, color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
             tools.forEach { label ->
                 NexoraToolbarButton(
@@ -1613,7 +1546,6 @@ private fun EditorToolbar(
 private fun FloatingEditorToolbar(
     activeMode: EditorMode,
     selectedTool: String,
-    compact: Boolean,
     onToolSelected: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1621,7 +1553,6 @@ private fun FloatingEditorToolbar(
         EditorToolbar(
             activeMode = activeMode,
             selectedTool = selectedTool,
-            compact = compact,
             onToolSelected = onToolSelected
         )
     }
@@ -1705,8 +1636,7 @@ private enum class EditorMode(
     Spreadsheet("Sheet", "Untitled Spreadsheet"),
     Presentation("Slides", "Untitled Presentation"),
     Pdf("PDF", "Untitled PDF"),
-    Text("Text", "Untitled Text"),
-    Workspace("Workspace", "Workspace")
+    Text("Text", "Untitled Text")
 }
 
 private fun WorkspaceFile.toEditorTab(): EditorTab = EditorTab(

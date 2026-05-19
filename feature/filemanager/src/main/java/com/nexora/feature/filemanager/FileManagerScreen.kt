@@ -42,11 +42,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.nexora.core.designsystem.component.NexoraCard
-import com.nexora.core.designsystem.component.NexoraGradientBackground
 import com.nexora.core.designsystem.component.NexoraIconBadge
 import com.nexora.core.designsystem.component.NexoraPill
 import com.nexora.core.designsystem.component.NexoraSearchField
-import com.nexora.core.designsystem.component.NexoraSectionHeader
 import com.nexora.core.designsystem.component.NexoraToolbarButton
 import com.nexora.core.designsystem.theme.NexoraError
 import com.nexora.core.designsystem.theme.NexoraPrimary
@@ -88,7 +86,10 @@ fun FileManagerScreen(
     val openFolderLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
-        uri?.let { viewModel.persistFolderAccess(it) }
+        uri?.let {
+            viewModel.persistFolderAccess(it)
+            viewModel.loadFolder(context, it)
+        }
     }
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -113,33 +114,37 @@ fun FileManagerScreen(
             }
         }
 
-    NexoraGradientBackground(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(horizontal = 14.dp)
+    ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(top = 20.dp, bottom = 108.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            contentPadding = PaddingValues(top = 14.dp, bottom = 104.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Files",
-                                style = MaterialTheme.typography.headlineSmall,
-                                color = MaterialTheme.colorScheme.onBackground
-                            )
-                            Text(
-                                text = "Local, cloud and recent work in one Pro view",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        NexoraToolbarButton(label = viewMode.label, onClick = { viewMode = viewMode.next() })
-                    }
+                FileManagerHeader(
+                    visibleCount = filteredFiles.size,
+                    totalCount = files.size,
+                    viewMode = viewMode,
+                    onCycleViewMode = { viewMode = viewMode.next() }
+                )
+            }
+
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     NexoraSearchField(
                         placeholder = "Search documents",
                         value = searchQuery,
                         onValueChange = { searchQuery = it }
+                    )
+                    FileActionBar(
+                        onOpenLocalFile = { openLocalFileLauncher.launch(viewModel.allowedMimeTypes()) },
+                        onOpenMultiple = { openMultipleLauncher.launch(viewModel.allowedMimeTypes()) },
+                        onOpenFolder = { openFolderLauncher.launch(null) }
                     )
                 }
             }
@@ -159,14 +164,6 @@ fun FileManagerScreen(
             }
 
             item {
-                OpenLocalFileCard(
-                    onOpenLocalFile = { openLocalFileLauncher.launch(viewModel.allowedMimeTypes()) },
-                    onOpenMultiple = { openMultipleLauncher.launch(viewModel.allowedMimeTypes()) },
-                    onOpenFolder = { openFolderLauncher.launch(null) }
-                )
-            }
-
-            item {
                 StorageBrowserCard(
                     persistedFolders = state.persistedFolders,
                     onBrowseStorage = { openFolderLauncher.launch(null) },
@@ -178,9 +175,10 @@ fun FileManagerScreen(
 
             state.currentFolderUri?.let { currentFolderUri ->
                 item {
-                    NexoraSectionHeader(
-                        title = "Folder contents",
-                        action = if (state.isBrowsing) "Loading" else "Refresh",
+                    FileResultsHeader(
+                        title = "Folder",
+                        countLabel = if (state.isBrowsing) "Loading" else "${state.entries.size} items",
+                        action = "Refresh",
                         onAction = { viewModel.loadFolder(context, currentFolderUri) }
                     )
                 }
@@ -223,59 +221,31 @@ fun FileManagerScreen(
             }
 
             item {
-                FilterRail(selectedType = selectedType, onFilterSelected = { selectedType = it })
+                FileExplorerControls(
+                    selectedType = selectedType,
+                    sortMode = sortMode,
+                    viewMode = viewMode,
+                    onFilterSelected = { selectedType = it },
+                    onSortSelected = { sortMode = it },
+                    onViewModeSelected = { viewMode = it }
+                )
             }
 
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    StorageTile(
-                        title = "Recent",
-                        detail = "${state.recentFiles.size} opened",
-                        color = NexoraPrimaryVariant,
-                        modifier = Modifier.weight(1f)
-                    )
-                    StorageTile(
-                        title = "Pinned",
-                        detail = "${state.recentFiles.count { it.isPinned }} saved",
-                        color = NexoraSecondary,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    NexoraSectionHeader(
-                        title = selectedType,
-                        action = sortMode.label,
-                        onAction = { sortMode = sortMode.next() }
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FileViewMode.entries.forEach { mode ->
-                            NexoraPill(
-                                label = mode.label,
-                                selected = viewMode == mode,
-                                onClick = { viewMode = mode }
-                            )
-                        }
-                    }
-                }
+                FileResultsHeader(
+                    title = selectedType,
+                    countLabel = "${filteredFiles.size} files",
+                    action = sortMode.label,
+                    onAction = { sortMode = sortMode.next() }
+                )
             }
 
             if (filteredFiles.isEmpty()) {
                 item {
-                    NexoraCard(contentPadding = 14.dp) {
-                        Text(
-                            text = "No files found",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "Open a local file or change the active filter.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    EmptyFileState(
+                        query = searchQuery,
+                        onOpenLocalFile = { openLocalFileLauncher.launch(viewModel.allowedMimeTypes()) }
+                    )
                 }
             } else if (viewMode == FileViewMode.Grid) {
                 items(filteredFiles.chunked(2)) { row ->
@@ -309,40 +279,146 @@ fun FileManagerScreen(
 }
 
 @Composable
-private fun OpenLocalFileCard(
+private fun FileManagerHeader(
+    visibleCount: Int,
+    totalCount: Int,
+    viewMode: FileViewMode,
+    onCycleViewMode: () -> Unit
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Files",
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            Text(
+                text = "$visibleCount shown - $totalCount recent",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        NexoraToolbarButton(label = viewMode.label, onClick = onCycleViewMode)
+    }
+}
+
+@Composable
+private fun FileActionBar(
     onOpenLocalFile: () -> Unit,
     onOpenMultiple: () -> Unit,
     onOpenFolder: () -> Unit
 ) {
-    NexoraCard(
-        color = NexoraPrimary.copy(alpha = 0.15f),
-        contentPadding = 14.dp,
-        onClick = onOpenLocalFile
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            NexoraIconBadge(label = "Open", color = NexoraPrimary, size = 42.dp)
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Open local file",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    text = "Pick DOCX, XLSX, PPTX, PDF, TXT or CSV from this device",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+        NexoraToolbarButton(label = "Open file", selected = true, onClick = onOpenLocalFile)
+        NexoraToolbarButton(label = "Multi-select", onClick = onOpenMultiple)
+        NexoraToolbarButton(label = "Open folder", onClick = onOpenFolder)
+    }
+}
+
+@Composable
+private fun FileExplorerControls(
+    selectedType: String,
+    sortMode: FileSortMode,
+    viewMode: FileViewMode,
+    onFilterSelected: (String) -> Unit,
+    onSortSelected: (FileSortMode) -> Unit,
+    onViewModeSelected: (FileViewMode) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf("Recent", "Favorites", "DOCX", "XLSX", "PDF", "PPTX", "TXT", "Local", "Cloud").forEach { label ->
+                NexoraPill(
+                    label = label,
+                    selected = selectedType == label,
+                    onClick = { onFilterSelected(label) }
                 )
             }
-            NexoraToolbarButton(label = "Browse", selected = true, onClick = onOpenLocalFile)
         }
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FileSortMode.entries.forEach { mode ->
+                NexoraPill(
+                    label = "Sort: ${mode.label}",
+                    selected = sortMode == mode,
+                    onClick = { onSortSelected(mode) }
+                )
+            }
+            FileViewMode.entries.forEach { mode ->
+                NexoraPill(
+                    label = mode.label,
+                    selected = viewMode == mode,
+                    onClick = { onViewModeSelected(mode) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FileResultsHeader(
+    title: String,
+    countLabel: String,
+    action: String,
+    onAction: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            Text(
+                text = countLabel,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Text(
+            text = action,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.clickable(onClick = onAction)
+        )
+    }
+}
+
+@Composable
+private fun EmptyFileState(
+    query: String,
+    onOpenLocalFile: () -> Unit
+) {
+    NexoraCard(contentPadding = 14.dp) {
+        Text(
+            text = if (query.isBlank()) "No files yet" else "No matching files",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = if (query.isBlank()) {
+                "Open a document to add it to recent files."
+            } else {
+                "Try another search or clear the active filter."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         Spacer(Modifier.height(10.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NexoraToolbarButton(label = "Multi", selected = true, onClick = onOpenMultiple)
-            NexoraToolbarButton(label = "Folder", selected = false, onClick = onOpenFolder)
-        }
+        NexoraToolbarButton(label = "Open file", selected = true, onClick = onOpenLocalFile)
     }
 }
 
@@ -378,29 +454,6 @@ private fun PermissionCard(
 }
 
 @Composable
-private fun StorageTile(
-    title: String,
-    detail: String,
-    color: Color,
-    modifier: Modifier = Modifier
-) {
-    NexoraCard(modifier = modifier, contentPadding = 13.dp) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(color)
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(title, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleMedium)
-        }
-        Spacer(Modifier.height(6.dp))
-        Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-    }
-}
-
-@Composable
 private fun StorageBrowserCard(
     persistedFolders: List<com.nexora.core.model.PersistedUriPermission>,
     onBrowseStorage: () -> Unit,
@@ -408,41 +461,51 @@ private fun StorageBrowserCard(
     onBrowsePrimary: () -> Unit,
     onOpenPersistedFolder: (android.net.Uri) -> Unit
 ) {
-    NexoraCard(color = NexoraSecondary.copy(alpha = 0.12f), contentPadding = 14.dp) {
-        Text(
-            text = "Storage locations",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    NexoraCard(contentPadding = 12.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Storage",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = if (persistedFolders.isEmpty()) "Browse device folders" else "${persistedFolders.size} pinned folders",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             NexoraToolbarButton(label = "Browse", selected = true, onClick = onBrowseStorage)
-            NexoraToolbarButton(label = "Downloads", selected = false, onClick = onBrowseDownloads)
-            NexoraToolbarButton(label = "Internal", selected = false, onClick = onBrowsePrimary)
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            NexoraToolbarButton(label = "Downloads", onClick = onBrowseDownloads)
+            NexoraToolbarButton(label = "Internal", onClick = onBrowsePrimary)
         }
         if (persistedFolders.isNotEmpty()) {
             Spacer(Modifier.height(10.dp))
-            Text(
-                text = "Pinned folders",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(6.dp))
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 persistedFolders.forEach { permission ->
-                    NexoraCard(contentPadding = 10.dp, onClick = {
-                        onOpenPersistedFolder(android.net.Uri.parse(permission.uri))
-                    }) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onOpenPersistedFolder(android.net.Uri.parse(permission.uri)) }
+                            .padding(horizontal = 8.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
                             text = permission.uri.substringAfterLast("/"),
                             style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
                         )
-                        Text(
-                            text = "Tree access granted",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Text("Open", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }
@@ -458,11 +521,11 @@ private fun FileBrowserRow(
     NexoraCard(
         modifier = Modifier.fillMaxWidth(),
         onClick = onClick,
-        contentPadding = 12.dp
+        contentPadding = 10.dp
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            val badge = if (entry.isDirectory) "DIR" else "FILE"
-            NexoraIconBadge(label = badge, color = NexoraPrimary, size = 38.dp)
+            val badge = if (entry.isDirectory) "FOL" else entry.mimeType.toBrowserBadge()
+            NexoraIconBadge(label = badge, color = if (entry.isDirectory) NexoraPrimary else entry.mimeType.toBrowserColor(), size = 36.dp)
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -472,15 +535,16 @@ private fun FileBrowserRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                val detail = entry.mimeType ?: if (entry.isDirectory) "Folder" else "Document"
                 Text(
-                    text = detail,
+                    text = entry.detailLabel,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
             Text(
-                text = if (entry.isDirectory) "Open" else "Open",
+                text = if (entry.isDirectory) "Browse" else "Open",
                 color = MaterialTheme.colorScheme.primary,
                 style = MaterialTheme.typography.labelLarge
             )
@@ -508,6 +572,40 @@ private fun initialPrimaryUri(): android.net.Uri? {
     }
 }
 
+private val BrowserEntry.detailLabel: String
+    get() {
+        if (isDirectory) return "Folder"
+        val typeLabel = mimeType?.substringAfterLast("/")?.uppercase() ?: "Document"
+        val sizeLabel = sizeBytes?.let(::formatBytes) ?: "Unknown size"
+        return "$typeLabel - $sizeLabel"
+    }
+
+private fun String?.toBrowserBadge(): String = when {
+    this?.contains("pdf", ignoreCase = true) == true -> "PDF"
+    this?.contains("spreadsheet", ignoreCase = true) == true -> "S"
+    this?.contains("presentation", ignoreCase = true) == true -> "P"
+    this?.contains("word", ignoreCase = true) == true -> "D"
+    this?.contains("text", ignoreCase = true) == true -> "TXT"
+    else -> "FILE"
+}
+
+private fun String?.toBrowserColor(): Color = when {
+    this?.contains("pdf", ignoreCase = true) == true -> NexoraError
+    this?.contains("spreadsheet", ignoreCase = true) == true -> NexoraSecondary
+    this?.contains("presentation", ignoreCase = true) == true -> Color(0xFFF97316)
+    this?.contains("text", ignoreCase = true) == true -> NexoraPrimaryVariant
+    else -> NexoraPrimary
+}
+
+private fun formatBytes(bytes: Long): String {
+    if (bytes < 1024) return "$bytes B"
+    val kb = bytes / 1024.0
+    if (kb < 1024) return String.format("%.1f KB", kb)
+    val mb = kb / 1024.0
+    if (mb < 1024) return String.format("%.1f MB", mb)
+    return String.format("%.1f GB", mb / 1024.0)
+}
+
 @Composable
 private fun FileListRow(
     file: WorkspaceFile,
@@ -517,10 +615,10 @@ private fun FileListRow(
     NexoraCard(
         modifier = Modifier.fillMaxWidth(),
         onClick = onClick,
-        contentPadding = if (compact) 9.dp else 12.dp
+        contentPadding = if (compact) 8.dp else 10.dp
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            NexoraIconBadge(label = file.type.badge, color = file.type.color, size = if (compact) 34.dp else 40.dp)
+            NexoraIconBadge(label = file.type.badge, color = file.type.color, size = if (compact) 32.dp else 38.dp)
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -553,26 +651,7 @@ private fun FileListRow(
                 }
             }
             Spacer(Modifier.width(10.dp))
-            Text("Open", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-        }
-    }
-}
-
-@Composable
-private fun FilterRail(
-    selectedType: String,
-    onFilterSelected: (String) -> Unit
-) {
-    Row(
-        modifier = Modifier.horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        listOf("Recent", "Favorites", "DOCX", "XLSX", "PDF", "PPTX", "TXT", "Images", "Local", "Cloud").forEach { label ->
-            NexoraPill(
-                label = label,
-                selected = selectedType == label,
-                onClick = { onFilterSelected(label) }
-            )
+            Text(">", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
         }
     }
 }
@@ -585,11 +664,11 @@ private fun FileGridCard(
 ) {
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f))
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surface)
             .clickable(onClick = onClick)
-            .padding(13.dp),
-        verticalArrangement = Arrangement.spacedBy(11.dp)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         NexoraIconBadge(label = file.type.badge, color = file.type.color, size = 44.dp)
         Column {

@@ -180,12 +180,24 @@ jobs:
           NEXORA_VERSION_NAME: ${{ needs.prepare.outputs.version_name }}
         run: ${{ steps.gradle_cmd.outputs.cmd }} --stacktrace :app:assembleRelease
 
+      - name: Normalize APK artifact filenames
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p build/ci-artifacts
+          if compgen -G "app/build/outputs/apk/debug/*.apk" > /dev/null; then
+            cp "$(find app/build/outputs/apk/debug -name '*.apk' -print -quit)" "build/ci-artifacts/nexora-office-debug.apk"
+          fi
+          if compgen -G "app/build/outputs/apk/release/*.apk" > /dev/null; then
+            cp "$(find app/build/outputs/apk/release -name '*.apk' -print -quit)" "build/ci-artifacts/nexora-office-release.apk"
+          fi
+
       - name: Upload debug APK
         if: ${{ always() && (github.event_name != 'workflow_dispatch' || github.event.inputs.build_variant == 'debug' || github.event.inputs.build_variant == 'all') }}
         uses: actions/upload-artifact@v4
         with:
           name: ${{ needs.prepare.outputs.artifact_prefix }}-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: build/ci-artifacts/nexora-office-debug.apk
           if-no-files-found: error
           retention-days: 14
 
@@ -194,7 +206,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ needs.prepare.outputs.artifact_prefix }}-release-apk
-          path: app/build/outputs/apk/release/*.apk
+          path: build/ci-artifacts/nexora-office-release.apk
           if-no-files-found: warn
           retention-days: 30
 
