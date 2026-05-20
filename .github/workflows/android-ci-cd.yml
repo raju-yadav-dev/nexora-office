@@ -170,7 +170,7 @@ jobs:
         run: ${{ steps.gradle_cmd.outputs.cmd }} --stacktrace :app:assembleDebug
 
       - name: Build release APK
-        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_variant == 'release' || github.event.inputs.build_variant == 'all' }}
+        if: ${{ (github.event_name != 'workflow_dispatch' || github.event.inputs.build_variant == 'release' || github.event.inputs.build_variant == 'all') && secrets.ANDROID_KEYSTORE_BASE64 != '' }}
         env:
           # Secure environment variable mapping (from repository secrets)
           NEXORA_RELEASE_STORE_FILE: ${{ runner.temp }}/signing/release.keystore
@@ -181,7 +181,7 @@ jobs:
         run: ${{ steps.gradle_cmd.outputs.cmd }} --stacktrace :app:assembleRelease
 
       - name: Verify release APK signature and alignment
-        if: ${{ always() && (github.event_name != 'workflow_dispatch' || github.event.inputs.build_variant == 'release' || github.event.inputs.build_variant == 'all') }}
+        if: ${{ always() && (github.event_name != 'workflow_dispatch' || github.event.inputs.build_variant == 'release' || github.event.inputs.build_variant == 'all') && secrets.ANDROID_KEYSTORE_BASE64 != '' }}
         shell: bash
         run: |
           APK_PATH="$(find app/build/outputs/apk/release -name '*.apk' -print -quit)"
@@ -215,7 +215,7 @@ jobs:
           retention-days: 14
 
       - name: Upload release APK
-        if: always()
+        if: ${{ always() && secrets.ANDROID_KEYSTORE_BASE64 != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: ${{ needs.prepare.outputs.artifact_prefix }}-release-apk
