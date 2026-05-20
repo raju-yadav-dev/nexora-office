@@ -1,4 +1,4 @@
-import com.android.build.api.dsl.ApplicationExtension
+import com.android.build.api.variant.AndroidComponentsExtension
 
 plugins {
     alias(libs.plugins.android.application)
@@ -98,11 +98,11 @@ tasks.register("verifyReleaseApk") {
     description = "Verify release APK signing and zip alignment."
     dependsOn("assembleRelease")
     doLast {
-        val apkDir = file("$buildDir/outputs/apk/release")
+        val apkDir = layout.buildDirectory.dir("outputs/apk/release").get().asFile
         val apkFile = apkDir.listFiles()?.firstOrNull { it.extension == "apk" }
             ?: throw GradleException("No release APK found in $apkDir")
-        val androidExt = extensions.getByType<ApplicationExtension>()
-        val sdkDir = androidExt.sdkDirectory.asFile.get()
+        val androidComponents = extensions.getByType<AndroidComponentsExtension<*, *, *>>()
+        val sdkDir = androidComponents.sdkComponents.sdkDirectory.get().asFile
         val buildToolsDir = sdkDir.resolve("build-tools")
             .listFiles()
             ?.maxByOrNull { it.name }
