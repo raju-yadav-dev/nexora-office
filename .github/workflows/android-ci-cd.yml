@@ -157,7 +157,7 @@ jobs:
           echo "cmd=./gradlew" >> "${GITHUB_OUTPUT}"
 
       - name: Decode Android keystore (optional for signed release)
-        if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' }}
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         shell: bash
@@ -173,12 +173,25 @@ jobs:
         if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_variant == 'release' || github.event.inputs.build_variant == 'all' }}
         env:
           # Secure environment variable mapping (from repository secrets)
-          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/signing/release.keystore
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          NEXORA_RELEASE_STORE_FILE: ${{ runner.temp }}/signing/release.keystore
+          NEXORA_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          NEXORA_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          NEXORA_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           NEXORA_VERSION_NAME: ${{ needs.prepare.outputs.version_name }}
         run: ${{ steps.gradle_cmd.outputs.cmd }} --stacktrace :app:assembleRelease
+
+      - name: Verify release APK signature and alignment
+        if: ${{ always() && (github.event_name != 'workflow_dispatch' || github.event.inputs.build_variant == 'release' || github.event.inputs.build_variant == 'all') }}
+        shell: bash
+        run: |
+          APK_PATH="$(find app/build/outputs/apk/release -name '*.apk' -print -quit)"
+          if [ -z "${APK_PATH}" ]; then
+            echo "No release APK found for verification." >&2
+            exit 1
+          fi
+          BUILD_TOOLS_DIR="${ANDROID_HOME}/build-tools/$(ls "${ANDROID_HOME}/build-tools" | sort -V | tail -n 1)"
+          "${BUILD_TOOLS_DIR}/apksigner" verify --verbose --print-certs "${APK_PATH}"
+          "${BUILD_TOOLS_DIR}/zipalign" -c -v 4 "${APK_PATH}"
 
       - name: Normalize APK artifact filenames
         if: always()
