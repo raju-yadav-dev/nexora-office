@@ -1,6 +1,7 @@
 package com.nexora.feature.editor
 
 import android.net.Uri
+import android.graphics.BitmapFactory
 import android.view.KeyEvent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -132,7 +133,6 @@ fun EditorScreen(
         mutableStateOf(openedFile?.type.toEditorMode())
     }
     var selectedTool by remember { mutableStateOf("Select") }
-    var toolbarPosition by remember { mutableStateOf(ToolbarPosition.Floating) }
     var chromeVisible by remember { mutableStateOf(true) }
     var toolsExpanded by remember { mutableStateOf(false) }
     var distractionFree by remember { mutableStateOf(true) }
@@ -296,7 +296,10 @@ fun EditorScreen(
                                 isEditing = true
                             )
                         } else {
-                            DocxUiState(isLoading = false, error = error.message ?: "Failed to load document")
+                            DocxUiState(
+                                isLoading = false,
+                                error = friendlyLoadError(error, "This document could not be opened. It may be unsupported or corrupted.")
+                            )
                         }
                     }
                 } else {
@@ -328,7 +331,7 @@ fun EditorScreen(
                         val document = pptxRepository.loadPptx(contentResolver, uri)
                         PptxUiState(document = document)
                     }.getOrElse { error ->
-                        PptxUiState(error = error.message ?: "Failed to load presentation")
+                        PptxUiState(error = friendlyLoadError(error, "This presentation could not be opened. It may be unsupported or corrupted."))
                     }
                 } else {
                     pptxState = PptxUiState(document = PptxDocument())
@@ -346,7 +349,7 @@ fun EditorScreen(
                         if (!autosavePayload.isNullOrBlank()) {
                             TextUiState(content = autosavePayload)
                         } else {
-                            TextUiState(error = error.message ?: "Failed to load text")
+                            TextUiState(error = friendlyLoadError(error, "This text file could not be opened. It may be unsupported or unreadable."))
                         }
                     }
                 } else {
@@ -354,6 +357,11 @@ fun EditorScreen(
                 }
                 docxState = DocxUiState()
                 pptxState = PptxUiState()
+            }
+            DocumentType.IMAGE -> {
+                docxState = DocxUiState()
+                pptxState = PptxUiState()
+                textState = TextUiState()
             }
             else -> {
                 docxState = DocxUiState()
@@ -364,7 +372,6 @@ fun EditorScreen(
     }
 
     val readingMode = fullscreenMode || distractionFree
-    val showEditorTools = chromeVisible && toolsExpanded && activeMode != EditorMode.Pdf
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -381,6 +388,7 @@ fun EditorScreen(
                         DocumentType.PDF -> pdfSaveAsLauncher.launch(tab.title)
                         DocumentType.TEXT -> textSaveAsLauncher.launch(tab.title)
                         DocumentType.SHEET -> xlsxSaveAsLauncher.launch(tab.title)
+                        DocumentType.IMAGE -> editorError = "Images are view-only in this version."
                         else -> editorError = "Save As is not available for this document type yet."
                     }
                 }
@@ -434,26 +442,12 @@ fun EditorScreen(
                 }
             }
             if (!readingMode || chromeVisible) {
-                EditorHeader(
+                EditorTopBar(
                     activeMode = activeMode,
                     activeTab = activeTab,
-                    toolbarPosition = toolbarPosition,
-                    fullscreenMode = fullscreenMode,
-                    distractionFree = distractionFree,
                     onDone = onDone,
-                    onSaveAs = saveAsAction,
                     onSave = saveAction,
-                    onToggleChrome = { chromeVisible = !chromeVisible },
-                    onToggleTools = { toolsExpanded = !toolsExpanded },
-                    onToolbarPositionChange = { toolbarPosition = it },
-                    onToggleFullscreen = {
-                        fullscreenMode = !fullscreenMode
-                        chromeVisible = !fullscreenMode
-                    },
-                    onToggleDistractionFree = {
-                        distractionFree = !distractionFree
-                        chromeVisible = !distractionFree
-                    },
+                    onMore = saveAsAction
                 )
             }
             if (editorError != null) {
@@ -467,24 +461,6 @@ fun EditorScreen(
                     NexoraToolbarButton(label = "Dismiss", onClick = { editorError = null })
                 }
             }
-            if ((!readingMode || chromeVisible) && state.tabs.size > 1) {
-                OpenTabStrip(
-                    tabs = state.tabs,
-                    activeTabId = state.activeTabId,
-                    onSelectTab = { tab ->
-                        editorViewModel.activateTab(tab)
-                        activeMode = tab.type.toEditorMode()
-                    }
-                )
-            }
-            if (showEditorTools && toolbarPosition == ToolbarPosition.Top) {
-                    EditorToolbar(
-                        activeMode = activeMode,
-                        selectedTool = selectedTool,
-                        onToolSelected = { selectedTool = it }
-                    )
-            }
-
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -526,6 +502,7 @@ fun EditorScreen(
                         }
                     )
                     EditorMode.Pdf -> PdfReader(activeTab = activeTab)
+                    EditorMode.Image -> ImageReader(activeTab = activeTab)
                     EditorMode.Text -> TextEditor(
                         activeTab = activeTab,
                         state = textState,
@@ -548,23 +525,24 @@ fun EditorScreen(
                             .padding(8.dp)
                     )
                 }
-                if (showEditorTools && toolbarPosition == ToolbarPosition.Floating) {
-                    FloatingEditorToolbar(
-                        activeMode = activeMode,
-                        selectedTool = selectedTool,
-                        onToolSelected = { selectedTool = it },
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(12.dp)
-                    )
-                }
             }
 
-            if (showEditorTools && toolbarPosition == ToolbarPosition.Bottom) {
-                EditorToolbar(
+            if (!readingMode || chromeVisible) {
+                BottomDocumentToolbar(
                     activeMode = activeMode,
                     selectedTool = selectedTool,
-                    onToolSelected = { selectedTool = it }
+                    isExpanded = toolsExpanded,
+                    onToolSelected = { selectedTool = it },
+                    onToggleExpanded = { toolsExpanded = !toolsExpanded },
+                    onToggleFullscreen = {
+                        fullscreenMode = !fullscreenMode
+                        chromeVisible = fullscreenMode
+                    },
+                    onToggleReading = {
+                        distractionFree = !distractionFree
+                        chromeVisible = distractionFree
+                    },
+                    onShare = { editorError = "Share is coming soon." }
                 )
             }
         }
@@ -572,99 +550,42 @@ fun EditorScreen(
 }
 
 @Composable
-private fun EditorHeader(
+private fun EditorTopBar(
     activeMode: EditorMode,
     activeTab: EditorTab?,
-    toolbarPosition: ToolbarPosition,
-    fullscreenMode: Boolean,
-    distractionFree: Boolean,
     onDone: () -> Unit,
-    onSaveAs: () -> Unit,
     onSave: () -> Unit,
-    onToggleChrome: () -> Unit,
-    onToggleTools: () -> Unit,
-    onToolbarPositionChange: (ToolbarPosition) -> Unit,
-    onToggleFullscreen: () -> Unit,
-    onToggleDistractionFree: () -> Unit
+    onMore: () -> Unit
 ) {
     val title = activeTab?.title ?: activeMode.fileName
-    val subtitle = when {
-        fullscreenMode -> "Fullscreen document view"
-        distractionFree -> "Distraction-free reading"
-        activeTab?.dirty == true -> "Unsaved changes"
-        activeTab?.sourcePath?.startsWith("content://") == true -> "Local file"
-        else -> "Autosaved"
-    }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.98f))
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            NexoraToolbarButton(label = "<", onClick = onDone)
-            Spacer(Modifier.width(8.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1
-                )
-            }
-            NexoraToolbarButton(label = if (activeTab?.dirty == true) "Save*" else "Saved", selected = activeTab?.dirty == true, onClick = onSave)
-            Spacer(Modifier.width(6.dp))
-            NexoraToolbarButton(label = "Edit", selected = false, onClick = onToggleTools)
-            Spacer(Modifier.width(6.dp))
-            NexoraToolbarButton(label = "...", onClick = onSaveAs)
-        }
-        Row(
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            NexoraPill(label = "Read", selected = distractionFree, onClick = onToggleDistractionFree)
-            NexoraPill(label = "Full", selected = fullscreenMode, onClick = onToggleFullscreen)
-            NexoraPill(label = "Hide", selected = false, onClick = onToggleChrome)
-            ToolbarPosition.entries.forEach { position ->
-                NexoraPill(
-                    label = position.label,
-                    selected = toolbarPosition == position,
-                    onClick = { onToolbarPositionChange(position) }
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun OpenTabStrip(
-    tabs: List<EditorTab>,
-    activeTabId: String?,
-    onSelectTab: (EditorTab) -> Unit
-) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.97f))
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        tabs.forEach { tab ->
-            NexoraPill(
-                label = if (tab.dirty) "${tab.title} *" else tab.title,
-                selected = tab.fileId == activeTabId,
-                onClick = { onSelectTab(tab) }
+        NexoraToolbarButton(label = "<", onClick = onDone)
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        if (activeTab?.dirty == true) {
+            NexoraToolbarButton(label = "Save", selected = true, onClick = onSave)
+        } else {
+            Text(
+                text = "Saved",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 8.dp)
             )
         }
+        NexoraToolbarButton(label = "...", onClick = onMore)
     }
 }
 
@@ -692,13 +613,10 @@ private fun DocumentEditor(
                     }
                 }
                 state.error != null -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(
-                            text = state.error,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = NexoraError
-                        )
-                    }
+                    DocumentErrorState(
+                        title = "Document could not be opened",
+                        message = state.error
+                    )
                 }
                 state.isEditing -> {
                     OutlinedTextField(
@@ -919,7 +837,10 @@ private fun SpreadsheetEditor(
                     Text("Loading spreadsheet...", color = Color(0xFF6B7280))
                 }
                 state.error != null -> {
-                    Text(state.error, color = NexoraError)
+                    DocumentErrorState(
+                        title = "Presentation could not be opened",
+                        message = state.error
+                    )
                 }
                 state.sheetNames.isEmpty() -> {
                     Text("Open an XLSX file to start editing.", color = Color(0xFF6B7280))
@@ -1371,6 +1292,52 @@ private fun PdfReader(activeTab: EditorTab?) {
 }
 
 @Composable
+private fun ImageReader(activeTab: EditorTab?) {
+    val context = LocalContext.current
+    val uri = activeTab?.sourcePath
+        ?.takeIf { it.startsWith("content://") }
+        ?.let(Uri::parse)
+
+    if (uri == null) {
+        DocumentErrorState(
+            title = "Image unavailable",
+            message = "Reopen this image from Files to restore access."
+        )
+        return
+    }
+
+    val bitmapState by produceState<android.graphics.Bitmap?>(initialValue = null, key1 = uri) {
+        value = runCatching {
+            context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
+        }.getOrNull()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF111827))
+            .padding(12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        val bitmap = bitmapState
+        if (bitmap == null) {
+            Text(
+                text = "Loading image...",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = 0.78f)
+            )
+        } else {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = activeTab.title,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+    }
+}
+
+@Composable
 private fun TextEditor(
     activeTab: EditorTab?,
     state: TextUiState,
@@ -1387,7 +1354,10 @@ private fun TextEditor(
         ) {
             when {
                 state.isLoading -> Text("Loading text file...", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                state.error != null -> Text(state.error, color = NexoraError)
+                state.error != null -> DocumentErrorState(
+                    title = "Text file could not be opened",
+                    message = state.error
+                )
                 else -> {
                     OutlinedTextField(
                         value = state.content,
@@ -1424,7 +1394,7 @@ private fun PdfViewer(uri: Uri) {
             session.open()
             pageCount = session.pageCount()
         }.onFailure { error ->
-            errorMessage = error.message ?: "Failed to open PDF"
+            errorMessage = friendlyLoadError(error, "This PDF could not be opened. It may be corrupted or access may have expired.")
             pageCount = 0
         }
         isLoading = false
@@ -1448,21 +1418,15 @@ private fun PdfViewer(uri: Uri) {
                 )
             }
         } else if (errorMessage != null) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = errorMessage ?: "Failed to load PDF",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = NexoraError
-                )
-            }
+            DocumentErrorState(
+                title = "PDF could not be opened",
+                message = errorMessage ?: "This file cannot be previewed right now."
+            )
         } else if (pageCount == 0) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = "PDF contains no pages.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFF6B7280)
-                )
-            }
+            DocumentErrorState(
+                title = "Empty PDF",
+                message = "This PDF does not contain any pages."
+            )
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
@@ -1472,6 +1436,44 @@ private fun PdfViewer(uri: Uri) {
                 itemsIndexed(List(pageCount) { it }) { index, page ->
                     PdfPage(session = session, index = page, pageNumber = index + 1)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DocumentErrorState(
+    title: String,
+    message: String,
+    actionLabel: String = "Reopen from Files",
+    onAction: (() -> Unit)? = null
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .padding(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            NexoraLogoMark(size = 42.dp)
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+            if (onAction != null) {
+                NexoraToolbarButton(label = actionLabel, selected = true, onClick = onAction)
             }
         }
     }
@@ -1517,6 +1519,77 @@ private fun PdfPage(session: PdfPageRenderer, index: Int, pageNumber: Int) {
 }
 
 @Composable
+private fun BottomDocumentToolbar(
+    activeMode: EditorMode,
+    selectedTool: String,
+    isExpanded: Boolean,
+    onToolSelected: (String) -> Unit,
+    onToggleExpanded: () -> Unit,
+    onToggleFullscreen: () -> Unit,
+    onToggleReading: () -> Unit,
+    onShare: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val primaryTools = when (activeMode) {
+        EditorMode.Document -> listOf("Edit", "Format", "Search", "Share", "More")
+        EditorMode.Spreadsheet -> listOf("Edit", "Formula", "Sort", "Share", "More")
+        EditorMode.Presentation -> listOf("Edit", "Insert", "Design", "Share", "More")
+        EditorMode.Pdf -> listOf("Edit", "Annotate", "Draw", "Search", "More")
+        EditorMode.Image -> listOf("Markup", "Crop", "Share", "Info", "More")
+        EditorMode.Text -> listOf("Edit", "Search", "Wrap", "Share", "More")
+    }
+    val contextualTools = when (activeMode) {
+        EditorMode.Pdf -> listOf("Highlight", "Underline", "Note", "Signature", "Export")
+        EditorMode.Image -> listOf("Rotate", "Fit", "Actual", "Save copy")
+        EditorMode.Text -> listOf("Find", "Replace", "Count", "Save copy")
+        else -> listOf("Bold", "Italic", "Insert", "Review", "Save copy")
+    }
+
+    Column(
+        modifier = modifier
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.98f))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (isExpanded) {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                contextualTools.forEach { label ->
+                    NexoraToolbarButton(
+                        label = label,
+                        selected = selectedTool == label,
+                        onClick = { onToolSelected(label) }
+                    )
+                }
+                NexoraToolbarButton(label = "Fullscreen", onClick = onToggleFullscreen)
+                NexoraToolbarButton(label = "Read", selected = true, onClick = onToggleReading)
+            }
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            primaryTools.forEach { label ->
+                val click = when (label) {
+                    "More" -> onToggleExpanded
+                    "Share" -> onShare
+                    else -> ({ onToolSelected(label) })
+                }
+                NexoraToolbarButton(
+                    label = label,
+                    selected = selectedTool == label || (label == "More" && isExpanded),
+                    onClick = click
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun EditorToolbar(
     activeMode: EditorMode,
     selectedTool: String,
@@ -1527,6 +1600,7 @@ private fun EditorToolbar(
         EditorMode.Spreadsheet -> listOf("fx", "Format", "Sort", "Chart", "Data", "Review")
         EditorMode.Presentation -> listOf("Text", "Image", "Shape", "Table", "Design", "Present")
         EditorMode.Pdf -> listOf("Annotate", "Highlight", "Draw", "Text", "Share", "More")
+        EditorMode.Image -> listOf("Crop", "Markup", "Share", "Info", "More")
         EditorMode.Text -> listOf("Find", "Replace", "Indent", "Wrap", "Count", "More")
     }
     NexoraCard(contentPadding = 6.dp, color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)) {
@@ -1540,28 +1614,6 @@ private fun EditorToolbar(
             }
         }
     }
-}
-
-@Composable
-private fun FloatingEditorToolbar(
-    activeMode: EditorMode,
-    selectedTool: String,
-    onToolSelected: (String) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Box(modifier = modifier.fillMaxWidth()) {
-        EditorToolbar(
-            activeMode = activeMode,
-            selectedTool = selectedTool,
-            onToolSelected = onToolSelected
-        )
-    }
-}
-
-private enum class ToolbarPosition(val label: String) {
-    Top("Top toolbar"),
-    Bottom("Bottom toolbar"),
-    Floating("Floating")
 }
 
 @Composable
@@ -1636,6 +1688,7 @@ private enum class EditorMode(
     Spreadsheet("Sheet", "Untitled Spreadsheet"),
     Presentation("Slides", "Untitled Presentation"),
     Pdf("PDF", "Untitled PDF"),
+    Image("Image", "Untitled Image"),
     Text("Text", "Untitled Text")
 }
 
@@ -1659,10 +1712,24 @@ private fun copyDocument(
     }
 }
 
+private fun friendlyLoadError(error: Throwable, fallback: String): String {
+    val raw = error.message.orEmpty()
+    return when {
+        raw.contains("EISDIR", ignoreCase = true) || raw.contains("Is a directory", ignoreCase = true) ->
+            "That item is a folder. Choose a document inside the folder to open it."
+        error is SecurityException ->
+            "Android access to this file has expired. Reopen it from Files to continue."
+        raw.contains("corrupt", ignoreCase = true) || raw.contains("zip", ignoreCase = true) ->
+            "This document appears to be corrupted or incomplete."
+        else -> fallback
+    }
+}
+
 private fun DocumentType?.toEditorMode(): EditorMode = when (this) {
     DocumentType.SHEET -> EditorMode.Spreadsheet
     DocumentType.SLIDE -> EditorMode.Presentation
     DocumentType.PDF -> EditorMode.Pdf
+    DocumentType.IMAGE -> EditorMode.Image
     DocumentType.TEXT -> EditorMode.Text
     DocumentType.DOC, null -> EditorMode.Document
 }
@@ -1673,6 +1740,7 @@ private val DocumentType.badge: String
         DocumentType.SHEET -> "S"
         DocumentType.SLIDE -> "P"
         DocumentType.PDF -> "PDF"
+        DocumentType.IMAGE -> "IMG"
         DocumentType.TEXT -> "TXT"
     }
 
@@ -1683,5 +1751,6 @@ private val DocumentType.color: Color
         DocumentType.SHEET -> NexoraSecondary
         DocumentType.SLIDE -> Color(0xFFF97316)
         DocumentType.PDF -> NexoraError
+        DocumentType.IMAGE -> Color(0xFF0EA5E9)
         DocumentType.TEXT -> NexoraPrimaryVariant
     }

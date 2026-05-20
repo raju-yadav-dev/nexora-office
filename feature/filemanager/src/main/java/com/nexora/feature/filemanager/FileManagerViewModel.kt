@@ -10,6 +10,10 @@ import com.nexora.core.common.permissions.PermissionManager
 import com.nexora.core.common.permissions.PermissionState
 import com.nexora.core.data.session.DocumentSessionRepository
 import com.nexora.core.data.storage.FileOpenManager
+import com.nexora.core.data.storage.FolderSelectedForOpenException
+import com.nexora.core.data.storage.DocumentUnavailableException
+import com.nexora.core.data.storage.DocumentUnreadableException
+import com.nexora.core.data.storage.EmptyDocumentException
 import com.nexora.core.data.storage.RecentFilesRepository
 import com.nexora.core.data.storage.SafPermissionMissingException
 import com.nexora.core.data.storage.StorageAccessRepository
@@ -194,6 +198,14 @@ class FileManagerViewModel @Inject constructor(
                 "Access to this document needs to be restored. Reopen it from the file picker to continue."
             is SecurityException ->
                 "Android did not grant lasting access to this document. Reopen it from the file picker."
+            is FolderSelectedForOpenException ->
+                "That is a folder. Open it in the folder browser, then choose a document inside."
+            is DocumentUnavailableException ->
+                "This file is no longer available. It may have been moved or deleted."
+            is DocumentUnreadableException ->
+                "This file cannot be read. Try a different copy or reopen it from Android's file picker."
+            is EmptyDocumentException ->
+                "This file appears to be empty."
             else ->
                 "Could not open this document. Try reopening it from the file picker."
         }

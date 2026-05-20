@@ -8,14 +8,25 @@ object FileTypeDetector {
         val normalizedMime = mime?.lowercase()?.trim().orEmpty()
         val extension = name?.substringAfterLast('.', missingDelimiterValue = "")?.lowercase()?.trim().orEmpty()
         return when {
-            normalizedMime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || extension == "docx" ->
+            normalizedMime in setOf(
+                "application/msword",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            ) || extension in setOf("doc", "docx") ->
                 DocumentType.DOC
-            normalizedMime == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || extension == "xlsx" ->
+            normalizedMime in setOf(
+                "application/vnd.ms-excel",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ) || extension in setOf("xls", "xlsx") ->
                 DocumentType.SHEET
-            normalizedMime == "application/vnd.openxmlformats-officedocument.presentationml.presentation" || extension == "pptx" ->
+            normalizedMime in setOf(
+                "application/vnd.ms-powerpoint",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            ) || extension in setOf("ppt", "pptx") ->
                 DocumentType.SLIDE
             normalizedMime == "application/pdf" || extension == "pdf" ->
                 DocumentType.PDF
+            normalizedMime.startsWith("image/") || extension in setOf("png", "jpg", "jpeg", "webp", "gif", "bmp", "heic", "heif") ->
+                DocumentType.IMAGE
             normalizedMime.startsWith("text/") || extension in setOf("txt", "md", "csv", "json", "xml") ->
                 DocumentType.TEXT
             else -> DocumentType.TEXT

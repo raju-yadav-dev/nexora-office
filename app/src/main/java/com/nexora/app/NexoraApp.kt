@@ -13,6 +13,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,12 +31,17 @@ import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.nexora.core.designsystem.component.NexoraLogoMark
+import com.nexora.core.model.WorkspaceFile
 import com.nexora.core.navigation.NexoraDestination
 import com.nexora.core.navigation.NexoraNavHost
 import kotlin.math.abs
 
 @Composable
-fun NexoraApp() {
+fun NexoraApp(
+    externalOpenFile: WorkspaceFile? = null,
+    externalOpenError: String? = null,
+    onExternalOpenConsumed: () -> Unit = {}
+) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route ?: NexoraDestination.Dashboard.route
@@ -64,6 +70,21 @@ fun NexoraApp() {
         }
     } else {
         Modifier
+    }
+
+    LaunchedEffect(externalOpenFile?.id, externalOpenError) {
+        externalOpenFile?.let { file ->
+            navController.navigate(NexoraDestination.Editor.createRoute(file)) {
+                launchSingleTop = true
+            }
+            onExternalOpenConsumed()
+        }
+        if (externalOpenError != null) {
+            navController.navigate(NexoraDestination.FileManager.route) {
+                launchSingleTop = true
+            }
+            onExternalOpenConsumed()
+        }
     }
 
     Scaffold(

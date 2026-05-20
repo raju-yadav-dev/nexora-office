@@ -10,6 +10,7 @@ enum class DocumentType {
     SHEET,
     SLIDE,
     PDF,
+    IMAGE,
     TEXT
 }
 

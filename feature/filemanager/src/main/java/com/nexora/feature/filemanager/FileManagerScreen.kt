@@ -334,7 +334,7 @@ private fun FileExplorerControls(
             modifier = Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            listOf("Recent", "Favorites", "DOCX", "XLSX", "PDF", "PPTX", "TXT", "Local", "Cloud").forEach { label ->
+            listOf("Recent", "Favorites", "DOCX", "XLSX", "PDF", "PPTX", "TXT", "Images", "Local", "Cloud").forEach { label ->
                 NexoraPill(
                     label = label,
                     selected = selectedType == label,
@@ -708,7 +708,7 @@ private fun WorkspaceFile.matchesFilter(filter: String): Boolean = when (filter)
     "PDF" -> type == DocumentType.PDF
     "PPTX" -> type == DocumentType.SLIDE
     "TXT" -> type == DocumentType.TEXT
-    "Images" -> path.endsWith(".png", true) || path.endsWith(".jpg", true) || path.endsWith(".jpeg", true)
+    "Images" -> type == DocumentType.IMAGE
     "Local" -> path.startsWith("content://") || path.startsWith("/local") || path.startsWith("/downloads")
     "Cloud" -> path.startsWith("/cloud")
     else -> true
@@ -738,6 +738,7 @@ private val DocumentType.label: String
         DocumentType.SHEET -> "Sheet"
         DocumentType.SLIDE -> "Slides"
         DocumentType.PDF -> "PDF"
+        DocumentType.IMAGE -> "Image"
         DocumentType.TEXT -> "Text"
     }
 
@@ -747,6 +748,7 @@ private val DocumentType.badge: String
         DocumentType.SHEET -> "S"
         DocumentType.SLIDE -> "P"
         DocumentType.PDF -> "PDF"
+        DocumentType.IMAGE -> "IMG"
         DocumentType.TEXT -> "TXT"
     }
 
@@ -757,5 +759,6 @@ private val DocumentType.color: Color
         DocumentType.SHEET -> NexoraSecondary
         DocumentType.SLIDE -> Color(0xFFF97316)
         DocumentType.PDF -> NexoraError
+        DocumentType.IMAGE -> Color(0xFF0EA5E9)
         DocumentType.TEXT -> NexoraPrimaryVariant
     }

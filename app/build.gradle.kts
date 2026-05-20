@@ -22,9 +22,31 @@ android {
         vectorDrawables.useSupportLibrary = true
     }
 
+    signingConfigs {
+        create("release") {
+            val storePath = providers.environmentVariable("NEXORA_RELEASE_STORE_FILE").orNull
+            if (!storePath.isNullOrBlank()) {
+                storeFile = file(storePath)
+                storePassword = providers.environmentVariable("NEXORA_RELEASE_STORE_PASSWORD").orNull
+                keyAlias = providers.environmentVariable("NEXORA_RELEASE_KEY_ALIAS").orNull
+                keyPassword = providers.environmentVariable("NEXORA_RELEASE_KEY_PASSWORD").orNull
+                enableV1Signing = false
+                enableV2Signing = true
+                enableV3Signing = true
+                enableV4Signing = true
+            }
+        }
+    }
+
     buildTypes {
         release {
+            val hasReleaseSigning = !providers.environmentVariable("NEXORA_RELEASE_STORE_FILE").orNull.isNullOrBlank()
             isMinifyEnabled = true
+            isShrinkResources = true
+            isDebuggable = false
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -52,6 +74,8 @@ android {
 
 dependencies {
     implementation(project(":core:designsystem"))
+    implementation(project(":core:data"))
+    implementation(project(":core:model"))
     implementation(project(":core:navigation"))
     implementation(project(":feature:dashboard"))
     implementation(project(":feature:filemanager"))

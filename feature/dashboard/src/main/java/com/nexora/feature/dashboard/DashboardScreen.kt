@@ -348,6 +348,7 @@ private val DocumentType.badge: String
         DocumentType.SHEET -> "S"
         DocumentType.SLIDE -> "P"
         DocumentType.PDF -> "PDF"
+        DocumentType.IMAGE -> "IMG"
         DocumentType.TEXT -> "TXT"
     }
 
@@ -357,5 +358,6 @@ private val DocumentType.color: Color
         DocumentType.SHEET -> NexoraSecondary
         DocumentType.SLIDE -> Color(0xFFF97316)
         DocumentType.PDF -> NexoraError
+        DocumentType.IMAGE -> Color(0xFF0EA5E9)
         DocumentType.TEXT -> Color(0xFF14B8A6)
     }

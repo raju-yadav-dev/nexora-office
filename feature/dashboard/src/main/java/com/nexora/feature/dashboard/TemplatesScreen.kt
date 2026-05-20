@@ -324,6 +324,7 @@ private fun Template.toWorkspaceFile(): WorkspaceFile {
         DocumentType.SHEET -> "xlsx"
         DocumentType.SLIDE -> "pptx"
         DocumentType.PDF -> "pdf"
+        DocumentType.IMAGE -> "png"
         DocumentType.TEXT -> "txt"
     }
     return WorkspaceFile(
